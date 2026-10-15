@@ -1,0 +1,6 @@
+{
+  "name": "CraftCraft 3D - Мультиплеерный мир блоков",
+  "description": "3D онлайн песочница в стиле Minecraft для ПК и телефонов с бесконечным процедурным миром, мультиплеером до 10 игроков и сохранением построек.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
