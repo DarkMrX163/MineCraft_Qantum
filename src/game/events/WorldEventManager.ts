@@ -3,6 +3,17 @@ import { VoxelWorld } from '../world/VoxelWorld';
 import { BlockType } from '../constants';
 import { SoundEffects } from '../audio/SoundEffects';
 
+export type MobType =
+  | 'ZOMBIE'
+  | 'SKELETON'
+  | 'CREEPER'
+  | 'ENDERMAN'
+  | 'SPIDER'
+  | 'COW'
+  | 'PIG'
+  | 'SHEEP'
+  | 'WOLF';
+
 export interface WorldEvent {
   id: string;
   title: string;
@@ -13,62 +24,51 @@ export interface WorldEvent {
 export class MobEntity {
   public mesh: THREE.Group;
   public position: THREE.Vector3;
-  public health = 20;
-  public type: 'ZOMBIE' | 'SKELETON';
-  public lastAttackTime = 0;
-  private walkTime = 0;
+  public health: number;
+  public maxHealth: number;
+  public type: MobType;
+  public isHostile: boolean;
+  public moveSpeed: number;
 
-  constructor(type: 'ZOMBIE' | 'SKELETON', startPos: THREE.Vector3) {
+  public headMesh?: THREE.Mesh;
+  public lArm?: THREE.Mesh;
+  public rArm?: THREE.Mesh;
+  public lLeg?: THREE.Mesh;
+  public rLeg?: THREE.Mesh;
+  public extraLegs: THREE.Mesh[] = [];
+
+  private walkTime = 0;
+  private wanderTimer = 0;
+  private wanderDir = new THREE.Vector3();
+  private fleeTimer = 0;
+  public fuseTimer = 0;
+
+  constructor(type: MobType, startPos: THREE.Vector3) {
     this.type = type;
     this.position = startPos.clone();
     this.mesh = new THREE.Group();
     this.mesh.position.copy(this.position);
 
-    const materials = this.createMobMaterials(type);
+    this.isHostile = ['ZOMBIE', 'SKELETON', 'CREEPER', 'ENDERMAN', 'SPIDER'].includes(type);
+    this.maxHealth = type === 'ENDERMAN' ? 30 : type === 'SPIDER' ? 16 : type === 'CREEPER' ? 20 : 18;
+    this.health = this.maxHealth;
+    this.moveSpeed = type === 'ENDERMAN' ? 2.6 : type === 'SPIDER' ? 2.2 : type === 'CREEPER' ? 1.6 : 1.8;
 
-    // Head (0.5 x 0.5 x 0.5)
-    const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const headMesh = new THREE.Mesh(headGeo, materials.headMats);
-    headMesh.position.set(0, 1.45, 0);
-    this.mesh.add(headMesh);
-
-    // Torso (0.5 x 0.75 x 0.25)
-    const bodyGeo = new THREE.BoxGeometry(0.5, 0.75, 0.25);
-    const bodyMesh = new THREE.Mesh(bodyGeo, materials.bodyMat);
-    bodyMesh.position.set(0, 0.825, 0);
-    this.mesh.add(bodyMesh);
-
-    // Arms
-    const armGeo = new THREE.BoxGeometry(0.2, 0.75, 0.2);
-    const lArm = new THREE.Mesh(armGeo, materials.skinMat);
-    lArm.position.set(-0.36, 0.825, 0.25);
-    lArm.rotation.x = -Math.PI / 2.2; // Arms stretched forward
-    this.mesh.add(lArm);
-
-    const rArm = new THREE.Mesh(armGeo, materials.skinMat);
-    rArm.position.set(0.36, 0.825, 0.25);
-    rArm.rotation.x = -Math.PI / 2.2;
-    this.mesh.add(rArm);
-
-    // Legs
-    const legGeo = new THREE.BoxGeometry(0.22, 0.75, 0.22);
-    const lLeg = new THREE.Mesh(legGeo, materials.legMat);
-    lLeg.position.set(-0.13, 0.375, 0);
-    this.mesh.add(lLeg);
-
-    const rLeg = new THREE.Mesh(legGeo, materials.legMat);
-    rLeg.position.set(0.13, 0.375, 0);
-    this.mesh.add(rLeg);
+    this.buildModel();
   }
 
-  private createMobMaterials(type: 'ZOMBIE' | 'SKELETON') {
+  private createTextureCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
     const canvas = document.createElement('canvas');
     canvas.width = 16;
     canvas.height = 16;
     const ctx = canvas.getContext('2d')!;
+    return { canvas, ctx };
+  }
+
+  private createMobMaterials(type: MobType) {
+    const { canvas, ctx } = this.createTextureCanvas();
 
     if (type === 'ZOMBIE') {
-      // Zombie Face Texture
       ctx.fillStyle = '#2e6b27';
       ctx.fillRect(0, 0, 16, 16);
       ctx.fillStyle = '#1c4518';
@@ -91,14 +91,8 @@ export class MobEntity {
       const bodyMat = new THREE.MeshLambertMaterial({ color: 0x1e3a8a }); // Blue shirt
       const legMat = new THREE.MeshLambertMaterial({ color: 0x0f172a }); // Dark pants
 
-      return {
-        skinMat,
-        bodyMat,
-        legMat,
-        headMats: [skinMat, skinMat, skinMat, skinMat, faceMat, skinMat],
-      };
-    } else {
-      // Skeleton Skull Texture
+      return { skinMat, bodyMat, legMat, headMats: [skinMat, skinMat, skinMat, skinMat, faceMat, skinMat] };
+    } else if (type === 'SKELETON') {
       ctx.fillStyle = '#d1d5db';
       ctx.fillRect(0, 0, 16, 16);
       ctx.fillStyle = '#111827';
@@ -116,30 +110,408 @@ export class MobEntity {
       const faceMat = new THREE.MeshLambertMaterial({ map: skullTex });
       const ribMat = new THREE.MeshLambertMaterial({ color: 0x9ca3af });
 
-      return {
-        skinMat: boneMat,
-        bodyMat: ribMat,
-        legMat: boneMat,
-        headMats: [boneMat, boneMat, boneMat, boneMat, faceMat, boneMat],
-      };
+      return { skinMat: boneMat, bodyMat: ribMat, legMat: boneMat, headMats: [boneMat, boneMat, boneMat, boneMat, faceMat, boneMat] };
+    } else if (type === 'CREEPER') {
+      // Creeper Pixel Face
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#15803d';
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 7 + y * 13) % 5 === 0) ctx.fillRect(x, y, 1, 1);
+        }
+      }
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(2, 4, 4, 4); // Eyes
+      ctx.fillRect(10, 4, 4, 4);
+      ctx.fillRect(6, 8, 4, 6); // Nose/Mouth
+      ctx.fillRect(4, 10, 2, 6);
+      ctx.fillRect(10, 10, 2, 6);
+
+      const creeperTex = new THREE.CanvasTexture(canvas);
+      creeperTex.magFilter = THREE.NearestFilter;
+      creeperTex.colorSpace = THREE.SRGBColorSpace;
+
+      const bodyMat = new THREE.MeshLambertMaterial({ color: 0x16a34a });
+      const faceMat = new THREE.MeshLambertMaterial({ map: creeperTex });
+
+      return { skinMat: bodyMat, bodyMat, legMat: bodyMat, headMats: [bodyMat, bodyMat, bodyMat, bodyMat, faceMat, bodyMat] };
+    } else if (type === 'ENDERMAN') {
+      // Enderman Black & Glowing Eyes
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#c084fc';
+      ctx.fillRect(2, 8, 5, 2); // Glowing Purple Eyes
+      ctx.fillRect(9, 8, 5, 2);
+      ctx.fillStyle = '#f472b6';
+      ctx.fillRect(4, 8, 2, 2);
+      ctx.fillRect(11, 8, 2, 2);
+
+      const enderTex = new THREE.CanvasTexture(canvas);
+      enderTex.magFilter = THREE.NearestFilter;
+      enderTex.colorSpace = THREE.SRGBColorSpace;
+
+      const blackMat = new THREE.MeshLambertMaterial({ color: 0x111115 });
+      const faceMat = new THREE.MeshLambertMaterial({ map: enderTex });
+
+      return { skinMat: blackMat, bodyMat: blackMat, legMat: blackMat, headMats: [blackMat, blackMat, blackMat, blackMat, faceMat, blackMat] };
+    } else if (type === 'SPIDER') {
+      // Spider Dark & 8 Red Eyes
+      ctx.fillStyle = '#262626';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#dc2626';
+      // 8 Eyes
+      ctx.fillRect(3, 7, 2, 2);
+      ctx.fillRect(6, 7, 2, 2);
+      ctx.fillRect(9, 7, 2, 2);
+      ctx.fillRect(12, 7, 2, 2);
+      ctx.fillRect(4, 10, 2, 2);
+      ctx.fillRect(10, 10, 2, 2);
+
+      const spiderTex = new THREE.CanvasTexture(canvas);
+      spiderTex.magFilter = THREE.NearestFilter;
+      spiderTex.colorSpace = THREE.SRGBColorSpace;
+
+      const spiderBodyMat = new THREE.MeshLambertMaterial({ color: 0x1c1917 });
+      const faceMat = new THREE.MeshLambertMaterial({ map: spiderTex });
+
+      return { skinMat: spiderBodyMat, bodyMat: spiderBodyMat, legMat: spiderBodyMat, headMats: [spiderBodyMat, spiderBodyMat, spiderBodyMat, spiderBodyMat, faceMat, spiderBodyMat] };
+    } else if (type === 'COW') {
+      // Cow Brown/White
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(2, 2, 5, 5);
+      ctx.fillRect(9, 8, 6, 6);
+      ctx.fillStyle = '#f43f5e';
+      ctx.fillRect(4, 11, 8, 4); // Snout
+
+      const cowTex = new THREE.CanvasTexture(canvas);
+      cowTex.magFilter = THREE.NearestFilter;
+      cowTex.colorSpace = THREE.SRGBColorSpace;
+
+      const bodyMat = new THREE.MeshLambertMaterial({ color: 0x5b21b6 }); // Brown
+      const skinMat = new THREE.MeshLambertMaterial({ color: 0x78350f });
+      const faceMat = new THREE.MeshLambertMaterial({ map: cowTex });
+
+      return { skinMat, bodyMat: skinMat, legMat: skinMat, headMats: [skinMat, skinMat, skinMat, skinMat, faceMat, skinMat] };
+    } else if (type === 'PIG') {
+      // Pig Pink
+      ctx.fillStyle = '#f472b6';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(2, 6, 2, 2); // Eyes
+      ctx.fillRect(12, 6, 2, 2);
+      ctx.fillStyle = '#ec4899';
+      ctx.fillRect(5, 9, 6, 4); // Snout
+
+      const pigTex = new THREE.CanvasTexture(canvas);
+      pigTex.magFilter = THREE.NearestFilter;
+      pigTex.colorSpace = THREE.SRGBColorSpace;
+
+      const pinkMat = new THREE.MeshLambertMaterial({ color: 0xf472b6 });
+      const faceMat = new THREE.MeshLambertMaterial({ map: pigTex });
+
+      return { skinMat: pinkMat, bodyMat: pinkMat, legMat: pinkMat, headMats: [pinkMat, pinkMat, pinkMat, pinkMat, faceMat, pinkMat] };
+    } else if (type === 'SHEEP') {
+      // Sheep Wool & Beige Face
+      ctx.fillStyle = '#fde68a'; // Face
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(3, 7, 2, 2);
+      ctx.fillRect(11, 7, 2, 2);
+
+      const sheepFaceTex = new THREE.CanvasTexture(canvas);
+      sheepFaceTex.magFilter = THREE.NearestFilter;
+      sheepFaceTex.colorSpace = THREE.SRGBColorSpace;
+
+      const woolMat = new THREE.MeshLambertMaterial({ color: 0xf1f5f9 });
+      const skinMat = new THREE.MeshLambertMaterial({ color: 0xfde68a });
+      const faceMat = new THREE.MeshLambertMaterial({ map: sheepFaceTex });
+
+      return { skinMat, bodyMat: woolMat, legMat: skinMat, headMats: [skinMat, skinMat, woolMat, skinMat, faceMat, skinMat] };
+    } else {
+      // Wolf Grey Fur
+      ctx.fillStyle = '#9ca3af';
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(3, 6, 2, 2);
+      ctx.fillRect(11, 6, 2, 2);
+      ctx.fillRect(6, 10, 4, 3); // Snout
+
+      const wolfTex = new THREE.CanvasTexture(canvas);
+      wolfTex.magFilter = THREE.NearestFilter;
+      wolfTex.colorSpace = THREE.SRGBColorSpace;
+
+      const wolfMat = new THREE.MeshLambertMaterial({ color: 0x9ca3af });
+      const faceMat = new THREE.MeshLambertMaterial({ map: wolfTex });
+
+      return { skinMat: wolfMat, bodyMat: wolfMat, legMat: wolfMat, headMats: [wolfMat, wolfMat, wolfMat, wolfMat, faceMat, wolfMat] };
+    }
+  }
+
+  private buildModel() {
+    const materials = this.createMobMaterials(this.type);
+
+    if (this.type === 'ZOMBIE' || this.type === 'SKELETON') {
+      // Humanoid Model
+      const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+      this.headMesh = new THREE.Mesh(headGeo, materials.headMats);
+      this.headMesh.position.set(0, 1.45, 0);
+      this.mesh.add(this.headMesh);
+
+      const bodyGeo = new THREE.BoxGeometry(0.5, 0.75, 0.25);
+      const bodyMesh = new THREE.Mesh(bodyGeo, materials.bodyMat);
+      bodyMesh.position.set(0, 0.825, 0);
+      this.mesh.add(bodyMesh);
+
+      const armGeo = new THREE.BoxGeometry(0.18, 0.75, 0.18);
+      this.lArm = new THREE.Mesh(armGeo, materials.skinMat);
+      this.lArm.position.set(-0.36, 0.825, 0.25);
+      this.lArm.rotation.x = -Math.PI / 2.2;
+      this.mesh.add(this.lArm);
+
+      this.rArm = new THREE.Mesh(armGeo, materials.skinMat);
+      this.rArm.position.set(0.36, 0.825, 0.25);
+      this.rArm.rotation.x = -Math.PI / 2.2;
+      this.mesh.add(this.rArm);
+
+      // Skeleton Bow
+      if (this.type === 'SKELETON') {
+        const bowGeo = new THREE.BoxGeometry(0.08, 0.6, 0.08);
+        const bowMat = new THREE.MeshBasicMaterial({ color: 0x78350f });
+        const bowMesh = new THREE.Mesh(bowGeo, bowMat);
+        bowMesh.position.set(0, -0.2, 0.2);
+        this.lArm.add(bowMesh);
+      }
+
+      const legGeo = new THREE.BoxGeometry(0.2, 0.75, 0.2);
+      this.lLeg = new THREE.Mesh(legGeo, materials.legMat);
+      this.lLeg.position.set(-0.13, 0.375, 0);
+      this.mesh.add(this.lLeg);
+
+      this.rLeg = new THREE.Mesh(legGeo, materials.legMat);
+      this.rLeg.position.set(0.13, 0.375, 0);
+      this.mesh.add(this.rLeg);
+    } else if (this.type === 'CREEPER') {
+      // Creeper Model
+      const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+      this.headMesh = new THREE.Mesh(headGeo, materials.headMats);
+      this.headMesh.position.set(0, 1.2, 0);
+      this.mesh.add(this.headMesh);
+
+      const bodyGeo = new THREE.BoxGeometry(0.4, 0.7, 0.3);
+      const bodyMesh = new THREE.Mesh(bodyGeo, materials.bodyMat);
+      bodyMesh.position.set(0, 0.6, 0);
+      this.mesh.add(bodyMesh);
+
+      const legGeo = new THREE.BoxGeometry(0.18, 0.3, 0.18);
+      const legPositions = [
+        [-0.13, 0.15, 0.13],
+        [0.13, 0.15, 0.13],
+        [-0.13, 0.15, -0.13],
+        [0.13, 0.15, -0.13],
+      ];
+      legPositions.forEach(([x, y, z]) => {
+        const leg = new THREE.Mesh(legGeo, materials.legMat);
+        leg.position.set(x, y, z);
+        this.extraLegs.push(leg);
+        this.mesh.add(leg);
+      });
+    } else if (this.type === 'ENDERMAN') {
+      // Tall Enderman Model
+      const headGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+      this.headMesh = new THREE.Mesh(headGeo, materials.headMats);
+      this.headMesh.position.set(0, 2.3, 0);
+      this.mesh.add(this.headMesh);
+
+      const bodyGeo = new THREE.BoxGeometry(0.35, 1.0, 0.2);
+      const bodyMesh = new THREE.Mesh(bodyGeo, materials.bodyMat);
+      bodyMesh.position.set(0, 1.5, 0);
+      this.mesh.add(bodyMesh);
+
+      const armGeo = new THREE.BoxGeometry(0.12, 1.2, 0.12);
+      this.lArm = new THREE.Mesh(armGeo, materials.skinMat);
+      this.lArm.position.set(-0.26, 1.4, 0);
+      this.mesh.add(this.lArm);
+
+      this.rArm = new THREE.Mesh(armGeo, materials.skinMat);
+      this.rArm.position.set(0.26, 1.4, 0);
+      this.mesh.add(this.rArm);
+
+      const legGeo = new THREE.BoxGeometry(0.12, 1.1, 0.12);
+      this.lLeg = new THREE.Mesh(legGeo, materials.legMat);
+      this.lLeg.position.set(-0.11, 0.55, 0);
+      this.mesh.add(this.lLeg);
+
+      this.rLeg = new THREE.Mesh(legGeo, materials.legMat);
+      this.rLeg.position.set(0.11, 0.55, 0);
+      this.mesh.add(this.rLeg);
+    } else if (this.type === 'SPIDER') {
+      // Wide Spider Model
+      const headGeo = new THREE.BoxGeometry(0.5, 0.4, 0.4);
+      this.headMesh = new THREE.Mesh(headGeo, materials.headMats);
+      this.headMesh.position.set(0, 0.25, 0.3);
+      this.mesh.add(this.headMesh);
+
+      const abdomenGeo = new THREE.BoxGeometry(0.7, 0.55, 0.8);
+      const abdomenMesh = new THREE.Mesh(abdomenGeo, materials.bodyMat);
+      abdomenMesh.position.set(0, 0.35, -0.3);
+      this.mesh.add(abdomenMesh);
+
+      // 8 Jointed Legs
+      const legGeo = new THREE.BoxGeometry(0.6, 0.08, 0.08);
+      for (let i = 0; i < 8; i++) {
+        const side = i < 4 ? 1 : -1;
+        const zOffset = ((i % 4) - 1.5) * 0.2;
+        const leg = new THREE.Mesh(legGeo, materials.legMat);
+        leg.position.set(side * 0.4, 0.2, zOffset);
+        leg.rotation.z = side * -0.3;
+        this.extraLegs.push(leg);
+        this.mesh.add(leg);
+      }
+    } else {
+      // Quadruped Animals (Cow, Pig, Sheep, Wolf)
+      const isCow = this.type === 'COW';
+      const isPig = this.type === 'PIG';
+      const isSheep = this.type === 'SHEEP';
+      const isWolf = this.type === 'WOLF';
+
+      const bodyW = isCow ? 0.75 : isSheep ? 0.8 : isPig ? 0.65 : 0.45;
+      const bodyH = isCow ? 0.7 : isSheep ? 0.75 : isPig ? 0.55 : 0.45;
+      const bodyL = isCow ? 1.1 : isSheep ? 1.1 : isPig ? 0.9 : 0.8;
+      const bodyY = isCow ? 0.75 : isSheep ? 0.7 : isPig ? 0.6 : 0.55;
+
+      const bodyGeo = new THREE.BoxGeometry(bodyW, bodyH, bodyL);
+      const bodyMesh = new THREE.Mesh(bodyGeo, materials.bodyMat);
+      bodyMesh.position.set(0, bodyY, 0);
+      this.mesh.add(bodyMesh);
+
+      // Head
+      const headGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+      this.headMesh = new THREE.Mesh(headGeo, materials.headMats);
+      const headY = bodyY + 0.25;
+      const headZ = bodyL / 2 + 0.15;
+      this.headMesh.position.set(0, headY, headZ);
+      this.mesh.add(this.headMesh);
+
+      // Snout box for Pig / Cow / Wolf
+      if (isPig) {
+        const snoutGeo = new THREE.BoxGeometry(0.2, 0.15, 0.12);
+        const snoutMat = new THREE.MeshLambertMaterial({ color: 0xec4899 });
+        const snoutMesh = new THREE.Mesh(snoutGeo, snoutMat);
+        snoutMesh.position.set(0, -0.05, 0.25);
+        this.headMesh.add(snoutMesh);
+      } else if (isCow) {
+        const hornGeo = new THREE.BoxGeometry(0.1, 0.15, 0.1);
+        const hornMat = new THREE.MeshLambertMaterial({ color: 0xfef08a });
+        const lHorn = new THREE.Mesh(hornGeo, hornMat);
+        lHorn.position.set(-0.25, 0.25, 0);
+        const rHorn = new THREE.Mesh(hornGeo, hornMat);
+        rHorn.position.set(0.25, 0.25, 0);
+        this.headMesh.add(lHorn);
+        this.headMesh.add(rHorn);
+      } else if (isWolf) {
+        const earGeo = new THREE.BoxGeometry(0.1, 0.15, 0.1);
+        const earMat = new THREE.MeshLambertMaterial({ color: 0x4b5563 });
+        const lEar = new THREE.Mesh(earGeo, earMat);
+        lEar.position.set(-0.15, 0.25, -0.05);
+        const rEar = new THREE.Mesh(earGeo, earMat);
+        rEar.position.set(0.15, 0.25, -0.05);
+        this.headMesh.add(lEar);
+        this.headMesh.add(rEar);
+      }
+
+      // 4 Stout Legs
+      const legH = isCow ? 0.5 : isSheep ? 0.45 : isPig ? 0.4 : 0.4;
+      const legGeo = new THREE.BoxGeometry(0.18, legH, 0.18);
+      const legPositions = [
+        [-bodyW / 2 + 0.1, legH / 2, bodyL / 2 - 0.15],
+        [bodyW / 2 - 0.1, legH / 2, bodyL / 2 - 0.15],
+        [-bodyW / 2 + 0.1, legH / 2, -bodyL / 2 + 0.15],
+        [bodyW / 2 - 0.1, legH / 2, -bodyL / 2 + 0.15],
+      ];
+      legPositions.forEach(([x, y, z]) => {
+        const leg = new THREE.Mesh(legGeo, materials.legMat);
+        leg.position.set(x, y, z);
+        this.extraLegs.push(leg);
+        this.mesh.add(leg);
+      });
     }
   }
 
   public update(dt: number, playerPos: THREE.Vector3) {
-    // Move towards player smoothly
-    const dir = new THREE.Vector3().subVectors(playerPos, this.position);
-    dir.y = 0;
-    const distSq = dir.lengthSq();
+    const toPlayer = new THREE.Vector3().subVectors(playerPos, this.position);
+    toPlayer.y = 0;
+    const dist = toPlayer.length();
 
-    if (distSq > 0.4 && distSq < 400) {
-      dir.normalize();
-      this.position.addScaledVector(dir, dt * 1.8);
-      this.mesh.position.copy(this.position);
-      this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+    let moveVector = new THREE.Vector3();
 
-      this.walkTime += dt * 6;
-      this.mesh.position.y = this.position.y + Math.abs(Math.sin(this.walkTime)) * 0.08;
+    if (this.isHostile) {
+      if (dist < 22 && dist > 0.4) {
+        moveVector.copy(toPlayer).normalize();
+      }
+
+      // Creeper Explosion Fuse
+      if (this.type === 'CREEPER' && dist < 2.2) {
+        this.fuseTimer += dt;
+        const pulse = 1.0 + Math.sin(this.fuseTimer * 20) * 0.2;
+        this.mesh.scale.set(pulse, pulse, pulse);
+      } else if (this.type === 'CREEPER') {
+        this.fuseTimer = Math.max(0, this.fuseTimer - dt);
+        this.mesh.scale.set(1, 1, 1);
+      }
+    } else {
+      // Passive Animals: Wander or Flee when hit
+      this.fleeTimer = Math.max(0, this.fleeTimer - dt);
+      if (this.fleeTimer > 0) {
+        // Run away from player
+        moveVector.copy(toPlayer).multiplyScalar(-1).normalize();
+      } else {
+        // Random Wander
+        this.wanderTimer -= dt;
+        if (this.wanderTimer <= 0) {
+          this.wanderTimer = 3 + Math.random() * 4;
+          const angle = Math.random() * Math.PI * 2;
+          this.wanderDir.set(Math.cos(angle), 0, Math.sin(angle));
+        }
+        if (Math.random() < 0.6) {
+          moveVector.copy(this.wanderDir);
+        }
+      }
     }
+
+    // Execute position move & rotation
+    if (moveVector.lengthSq() > 0) {
+      const spd = this.fleeTimer > 0 ? this.moveSpeed * 1.5 : this.moveSpeed;
+      this.position.addScaledVector(moveVector, dt * spd);
+      this.mesh.position.copy(this.position);
+      this.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+
+      this.walkTime += dt * 7;
+      const swing = Math.sin(this.walkTime) * 0.45;
+
+      // Animate legs
+      if (this.lLeg && this.rLeg) {
+        this.lLeg.rotation.x = swing;
+        this.rLeg.rotation.x = -swing;
+      }
+      if (this.extraLegs.length === 4) {
+        this.extraLegs[0].rotation.x = swing;
+        this.extraLegs[1].rotation.x = -swing;
+        this.extraLegs[2].rotation.x = -swing;
+        this.extraLegs[3].rotation.x = swing;
+      } else if (this.extraLegs.length === 8) {
+        // Spider leg crawl
+        this.extraLegs.forEach((leg, idx) => {
+          leg.rotation.x = Math.sin(this.walkTime + idx) * 0.3;
+        });
+      }
+    }
+  }
+
+  public onHit(playerPos: THREE.Vector3) {
+    this.fleeTimer = 4.0; // Passive mobs flee when hit
   }
 }
 
@@ -149,6 +521,7 @@ export class WorldEventManager {
   public mobs: MobEntity[] = [];
   private scene: THREE.Scene;
   private world: VoxelWorld;
+  private ambientSpawnTimer = 0;
 
   constructor(scene: THREE.Scene, world: VoxelWorld) {
     this.scene = scene;
@@ -170,18 +543,20 @@ export class WorldEventManager {
   }
 
   private spawnMobInvasion(playerPos: THREE.Vector3) {
-    // Clean existing mobs
+    // Clear existing event mobs
     this.mobs.forEach((m) => this.scene.remove(m.mesh));
     this.mobs = [];
 
-    // Spawn 3 Mobs around player
-    for (let i = 0; i < 3; i++) {
-      const angle = (i / 3) * Math.PI * 2;
-      const spawnX = playerPos.x + Math.cos(angle) * 10;
-      const spawnZ = playerPos.z + Math.sin(angle) * 10;
-      const spawnY = this.world.getBlock(spawnX, playerPos.y, spawnZ) ? playerPos.y + 1 : playerPos.y;
+    const invasionTypes: MobType[] = ['ZOMBIE', 'SKELETON', 'CREEPER', 'ENDERMAN', 'SPIDER'];
 
-      const mob = new MobEntity(i % 2 === 0 ? 'ZOMBIE' : 'SKELETON', new THREE.Vector3(spawnX, spawnY, spawnZ));
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      const spawnX = playerPos.x + Math.cos(angle) * 12;
+      const spawnZ = playerPos.z + Math.sin(angle) * 12;
+      const spawnY = Math.max(1, this.world.getBlock(spawnX, playerPos.y, spawnZ) ? playerPos.y + 1 : playerPos.y);
+
+      const type = invasionTypes[i % invasionTypes.length];
+      const mob = new MobEntity(type, new THREE.Vector3(spawnX, spawnY, spawnZ));
       this.mobs.push(mob);
       this.scene.add(mob.mesh);
     }
@@ -212,17 +587,46 @@ export class WorldEventManager {
     SoundEffects.getInstance().playPlaceSound();
   }
 
-  public update(dt: number, playerPos: THREE.Vector3) {
+  public update(dt: number, playerPos: THREE.Vector3, isNight = false) {
     if (this.eventTimeRemaining > 0) {
       this.eventTimeRemaining -= dt;
       if (this.eventTimeRemaining <= 0) {
         this.activeEvent = null;
-        this.mobs.forEach((m) => this.scene.remove(m.mesh));
-        this.mobs = [];
+      }
+    }
+
+    // Ambient Mob Spawning (keeps 6-8 mobs active in the world)
+    this.ambientSpawnTimer += dt;
+    if (this.ambientSpawnTimer > 8.0) {
+      this.ambientSpawnTimer = 0;
+      if (this.mobs.length < 8) {
+        this.spawnAmbientMob(playerPos, isNight);
       }
     }
 
     this.mobs.forEach((mob) => mob.update(dt, playerPos));
+  }
+
+  private spawnAmbientMob(playerPos: THREE.Vector3, isNight: boolean) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 14 + Math.random() * 10;
+    const spawnX = Math.floor(playerPos.x + Math.cos(angle) * dist);
+    const spawnZ = Math.floor(playerPos.z + Math.sin(angle) * dist);
+    const spawnY = Math.max(2, Math.floor(playerPos.y));
+
+    const monsters: MobType[] = ['ZOMBIE', 'SKELETON', 'CREEPER', 'ENDERMAN', 'SPIDER'];
+    const animals: MobType[] = ['COW', 'PIG', 'SHEEP', 'WOLF'];
+
+    let chosenType: MobType;
+    if (isNight) {
+      chosenType = Math.random() < 0.8 ? monsters[Math.floor(Math.random() * monsters.length)] : animals[Math.floor(Math.random() * animals.length)];
+    } else {
+      chosenType = Math.random() < 0.8 ? animals[Math.floor(Math.random() * animals.length)] : monsters[Math.floor(Math.random() * monsters.length)];
+    }
+
+    const mob = new MobEntity(chosenType, new THREE.Vector3(spawnX, spawnY, spawnZ));
+    this.mobs.push(mob);
+    this.scene.add(mob.mesh);
   }
 
   public attackMobWithRay(camPos: THREE.Vector3, camDir: THREE.Vector3, maxDist = 5.5): boolean {
@@ -231,17 +635,13 @@ export class WorldEventManager {
 
     for (let i = 0; i < this.mobs.length; i++) {
       const mob = this.mobs[i];
-      // Mob center position (chest height)
-      const mobCenter = mob.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+      const mobCenter = mob.position.clone().add(new THREE.Vector3(0, 0.8, 0));
       const toMob = mobCenter.clone().sub(camPos);
 
-      // Proj distance along ray direction
       const projDist = toMob.dot(camDir);
       if (projDist > 0 && projDist < minMobDist) {
-        // Perpendicular distance squared from camera ray line
         const perpDistSq = toMob.lengthSq() - projDist * projDist;
-        // Hit radius 0.9m
-        if (perpDistSq <= 0.81) {
+        if (perpDistSq <= 0.9) {
           minMobDist = projDist;
           closestMobIdx = i;
         }
@@ -250,13 +650,14 @@ export class WorldEventManager {
 
     if (closestMobIdx !== -1) {
       const mob = this.mobs[closestMobIdx];
-      mob.health -= 10;
+      mob.health -= 8;
+      mob.onHit(camPos);
 
-      // Apply hit knockback away from player
+      // Knockback
       const kbDir = camDir.clone();
       kbDir.y = 0.15;
       kbDir.normalize();
-      mob.position.addScaledVector(kbDir, 0.8);
+      mob.position.addScaledVector(kbDir, 0.7);
       mob.mesh.position.copy(mob.position);
 
       SoundEffects.getInstance().playBreakSound();

@@ -501,7 +501,8 @@ export default function App() {
         }
       }
 
-      eventManager.update(dt, playerPhysics.position);
+      const isNight = dayTime < 0.2 || dayTime > 0.8;
+      eventManager.update(dt, playerPhysics.position, isNight);
       setEventTimer(eventManager.eventTimeRemaining);
 
       let camShakeX = 0;
