@@ -45,7 +45,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
   const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [isMuted, setIsMuted] = useState(SoundEffects.getInstance().isMuted);
 
-  const [activeRooms, setActiveRooms] = useState<Array<{ roomId: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }>>([]);
+  const [multiplayerTab, setMultiplayerTab] = useState<'LIST' | 'CREATE'>('CREATE');
+  const [newServerName, setNewServerName] = useState(`Мир ${savedName}`);
+  const [newServerPin, setNewServerPin] = useState(String(Math.floor(Math.random() * 8999 + 1000)));
+  const [newServerMaxPlayers, setNewServerMaxPlayers] = useState(10);
+
+  const [activeRooms, setActiveRooms] = useState<Array<{ roomId: string; serverName?: string; hostName?: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }>>([]);
 
   const fetchActiveRooms = async () => {
     try {
@@ -57,6 +62,33 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
     } catch {
       // Ignore network errors
     }
+  };
+
+  const handleCreateAndStartWorld = async () => {
+    playClick();
+    if (!playerName.trim()) return;
+
+    const pin = (newServerPin || '1234').trim().toLowerCase().replace(/[^a-z0-9_]/g, '') || '1234';
+    const serverName = (newServerName || `Мир ${playerName}`).trim();
+
+    try {
+      await fetch('/api/worlds/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: pin,
+          name: serverName,
+          hostName: playerName,
+          maxPlayers: newServerMaxPlayers
+        })
+      });
+    } catch {
+      // Ignore
+    }
+
+    setRoomId(pin);
+    setShowMultiplayerPrompt(false);
+    onStartGame(playerName.trim(), selectedColor, pin, false);
   };
 
   useEffect(() => {
@@ -440,7 +472,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
             <div className="flex items-center justify-between border-b border-[#3d3023] pb-3 mb-4">
               <div className="flex items-center gap-2 font-bold text-base text-emerald-400 uppercase tracking-wider">
                 <Globe className="w-5 h-5 text-emerald-400" />
-                <span>Сетевая игра — Сервер комнат</span>
+                <span>Сетевая игра — Серверы мира</span>
               </div>
               <button
                 type="button"
@@ -451,145 +483,185 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
               </button>
             </div>
 
-            <div className="space-y-4 text-xs">
-              {/* Active Online Rooms List */}
-              <div className="space-y-2">
+            {/* Navigation Tabs */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button
+                type="button"
+                onClick={() => { playClick(); setMultiplayerTab('CREATE'); }}
+                className={`py-2 px-3 text-xs font-bold uppercase border transition-all ${
+                  multiplayerTab === 'CREATE'
+                    ? 'bg-emerald-800 text-yellow-200 border-emerald-400 shadow-md'
+                    : 'bg-[#1a130d] text-stone-400 border-[#3d2e20] hover:text-white'
+                }`}
+              >
+                🚀 Создать свой мир
+              </button>
+              <button
+                type="button"
+                onClick={() => { playClick(); setMultiplayerTab('LIST'); fetchActiveRooms(); }}
+                className={`py-2 px-3 text-xs font-bold uppercase border transition-all ${
+                  multiplayerTab === 'LIST'
+                    ? 'bg-emerald-800 text-yellow-200 border-emerald-400 shadow-md'
+                    : 'bg-[#1a130d] text-stone-400 border-[#3d2e20] hover:text-white'
+                }`}
+              >
+                🌐 Список серверов ({activeRooms.length})
+              </button>
+            </div>
+
+            {multiplayerTab === 'CREATE' ? (
+              /* CREATE NEW WORLD FORM */
+              <div className="space-y-3.5 text-xs">
+                <div className="p-2.5 bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 leading-relaxed">
+                  Создайте свой мир! После создания сервер появится в общедоступном списке, и друзья смогут подключиться к вам в 1 клик.
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[#c0b0a0] font-bold uppercase tracking-wider block">
+                    Название сервера / мира:
+                  </label>
+                  <input
+                    type="text"
+                    value={newServerName}
+                    onChange={(e) => setNewServerName(e.target.value)}
+                    maxLength={30}
+                    className="w-full bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-white font-bold text-sm outline-none transition-colors"
+                    placeholder="Например: Замок Стива"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[#c0b0a0] font-bold uppercase tracking-wider block">
+                      PIN-код мира (Код):
+                    </label>
+                    <input
+                      type="text"
+                      value={newServerPin}
+                      onChange={(e) => setNewServerPin(e.target.value)}
+                      maxLength={12}
+                      className="w-full bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-emerald-300 font-bold text-sm outline-none transition-colors font-mono"
+                      placeholder="1234"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[#c0b0a0] font-bold uppercase tracking-wider block">
+                      Макс. игроков:
+                    </label>
+                    <select
+                      value={newServerMaxPlayers}
+                      onChange={(e) => setNewServerMaxPlayers(Number(e.target.value))}
+                      className="w-full bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-white font-bold text-sm outline-none transition-colors"
+                    >
+                      <option value={5}>5 игроков</option>
+                      <option value={10}>10 игроков</option>
+                      <option value={15}>15 игроков</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCreateAndStartWorld}
+                  className="w-full mt-3 py-3 bg-emerald-700 hover:bg-emerald-600 text-yellow-200 font-black text-sm uppercase tracking-wider border-t-2 border-l-2 border-emerald-400 border-b-2 border-r-2 border-emerald-950 shadow-xl transition-all active:translate-y-0.5"
+                >
+                  🚀 Запустить мир и открыть вход друзьям
+                </button>
+              </div>
+            ) : (
+              /* BROWSE EXISTING ACTIVE WORLDS LIST */
+              <div className="space-y-3.5 text-xs">
                 <div className="text-amber-300 font-bold uppercase tracking-wider text-[11px] flex items-center justify-between">
-                  <span>🔥 Игроки онлайн прямо сейчас:</span>
+                  <span>🔥 Активные созданные сервера онлайн:</span>
                   <button
                     type="button"
                     onClick={fetchActiveRooms}
                     className="text-[#8a7563] hover:text-white underline text-[10px]"
                   >
-                    Обновить
+                    Обновить список
                   </button>
                 </div>
 
                 {activeRooms.length > 0 ? (
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                     {activeRooms.map((r) => (
                       <div
                         key={r.roomId}
-                        className={`p-2.5 border flex items-center justify-between transition-all ${
+                        className={`p-3 border flex items-center justify-between transition-all ${
                           roomId === r.roomId
-                            ? 'bg-emerald-950/80 border-emerald-400 shadow-md'
+                            ? 'bg-emerald-950/90 border-emerald-400 shadow-md'
                             : 'bg-[#17110c] border-[#3a2d21] hover:border-[#6b533e]'
                         }`}
                       >
                         <div>
-                          <div className="flex items-center gap-2 font-bold text-white text-sm">
-                            <span className="text-emerald-400 font-mono">#{r.roomId}</span>
+                          <div className="font-bold text-white text-sm flex items-center gap-2">
+                            <span>{r.serverName || `Мир #${r.roomId}`}</span>
                             <span className="text-[10px] bg-emerald-900/80 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40 font-mono">
                               {r.playerCount}/{r.maxPlayers} игроков
                             </span>
                           </div>
-                          <div className="text-[10px] text-[#9c8978] truncate max-w-[240px] mt-0.5">
-                            В комнате: {r.players.map(p => p.name).join(', ')}
+                          <div className="text-[10px] text-[#9c8978] mt-0.5 flex items-center gap-2">
+                            <span>Создатель: <strong className="text-stone-300">{r.hostName || 'Игрок'}</strong></span>
+                            <span>•</span>
+                            <span className="text-emerald-400 font-mono">Код PIN: #{r.roomId}</span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyShareLink(r.roomId)}
-                            className="p-1.5 bg-[#34261b] hover:bg-[#4a382a] text-stone-300 border border-[#523e2e] text-[10px]"
-                            title="Скопировать ссылку для друга"
-                          >
-                            <Share2 className="w-3.5 h-3.5 text-emerald-400" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowMultiplayerPrompt(false);
-                              handleStartMultiplayer(r.roomId);
-                            }}
-                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black uppercase text-xs shadow-sm"
-                          >
-                            Войти
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMultiplayerPrompt(false);
+                            handleStartMultiplayer(r.roomId);
+                          }}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black uppercase text-xs shadow-md shrink-0 active:scale-95 transition-transform"
+                        >
+                          Подключиться
+                        </button>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="p-3 bg-[#17110c] border border-[#3a2d21] text-center text-[#8a7563]">
-                    Сейчас нет активных игроков. Создайте свою комнату или подключитесь по коду ниже!
-                  </div>
-                )}
-              </div>
-
-              {/* Room Code Manual Input */}
-              <div className="space-y-1 pt-2 border-t border-[#3d3023]">
-                <label className="text-[#c0b0a0] font-bold uppercase tracking-wider block flex items-center justify-between">
-                  <span>Код вашей комнаты:</span>
-                  <span className="text-[#8a7563] text-[10px]">Чтобы игра в одном мире — укажите один код!</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={roomId}
-                    onChange={(e) => setRoomId(e.target.value)}
-                    maxLength={24}
-                    className="flex-1 bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-emerald-300 font-bold text-sm outline-none transition-colors"
-                    placeholder="default"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleCopyShareLink()}
-                    className="px-3 py-2 bg-[#34261b] hover:bg-[#4a382a] text-emerald-300 border border-[#523e2e] font-bold text-xs flex items-center gap-1 shrink-0"
-                    title="Скопировать ссылку для друга"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>{copiedShareLink ? 'Ссылка скопирована!' : 'Ссылка для друга'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Preset Quick Rooms */}
-              <div className="space-y-1.5">
-                <div className="text-[#8a7563] font-bold uppercase tracking-wider text-[10px]">
-                  Быстрый выбор стандартных комнат:
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {['default', 'world1', 'survival', 'craft-room'].map((preset) => (
+                  <div className="p-4 bg-[#17110c] border border-[#3a2d21] text-center text-[#8a7563] space-y-2">
+                    <div>Сейчас созданных серверов нет.</div>
                     <button
                       type="button"
-                      key={preset}
-                      onClick={() => { playClick(); setRoomId(preset); }}
-                      className={`px-2.5 py-1 text-xs border font-mono ${
-                        roomId === preset
-                          ? 'bg-emerald-950 border-emerald-400 text-emerald-300 font-bold'
-                          : 'bg-[#18110b] border-[#3a2d21] text-stone-400 hover:text-white'
-                      }`}
+                      onClick={() => setMultiplayerTab('CREATE')}
+                      className="px-3 py-1.5 bg-emerald-800 text-yellow-200 font-bold uppercase text-xs border border-emerald-400"
                     >
-                      #{preset}
+                      + Создать первый мир
                     </button>
-                  ))}
+                  </div>
+                )}
+
+                {/* Direct PIN Input Fallback */}
+                <div className="pt-2 border-t border-[#3d3023] space-y-1">
+                  <label className="text-[#8a7563] font-bold uppercase tracking-wider block text-[10px]">
+                    Или введите PIN-код напрямую:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      maxLength={16}
+                      className="flex-1 bg-[#120d09] border border-[#473729] focus:border-emerald-400 px-3 py-1.5 text-emerald-300 font-bold text-xs outline-none font-mono"
+                      placeholder="Например: 1234"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMultiplayerPrompt(false);
+                        handleStartMultiplayer();
+                      }}
+                      className="px-3 py-1.5 bg-[#4a382a] hover:bg-[#614937] text-white font-bold uppercase text-xs border border-[#785d46]"
+                    >
+                      Войти по PIN
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-2 gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => { playClick(); setShowMultiplayerPrompt(false); }}
-                className="py-2.5 bg-[#4a382a] hover:bg-[#614937] text-white font-bold uppercase border-t-2 border-l-2 border-[#785d46] border-b-2 border-r-2 border-[#261c14] transition-colors"
-              >
-                Отмена
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMultiplayerPrompt(false);
-                  handleStartMultiplayer();
-                }}
-                className="py-2.5 bg-[#22632b] hover:bg-[#2e8039] text-white hover:text-[#ffffa0] font-bold uppercase border-t-2 border-l-2 border-[#42a84e] border-b-2 border-r-2 border-[#123817] transition-colors flex items-center justify-center gap-1 shadow-lg"
-              >
-                <span>Подключиться к #{roomId}</span>
-              </button>
-            </div>
+            )}
           </div>
         </div>
       )}

@@ -147,10 +147,21 @@ async function startServer() {
 
   app.use(express.json());
 
+interface CreatedWorld {
+  roomId: string;
+  name: string;
+  hostName: string;
+  maxPlayers: number;
+  createdAt: number;
+}
+
+const createdWorlds = new Map<string, CreatedWorld>();
+
   app.get('/api/rooms', (req, res) => {
-    const result: Array<{ roomId: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }> = [];
+    const result: Array<{ roomId: string; serverName: string; hostName: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }> = [];
     for (const [roomId, room] of rooms.entries()) {
       if (room.players.size > 0) {
+        const customWorld = createdWorlds.get(roomId);
         const playerList = Array.from(room.players.values()).map(p => ({
           id: p.state.id,
           name: p.state.name,
@@ -158,14 +169,42 @@ async function startServer() {
         }));
         result.push({
           roomId,
+          serverName: customWorld ? customWorld.name : `Мир #${roomId}`,
+          hostName: customWorld ? customWorld.hostName : (playerList[0]?.name || 'Игрок'),
           playerCount: room.players.size,
-          maxPlayers: MAX_PLAYERS_PER_ROOM,
+          maxPlayers: customWorld ? customWorld.maxPlayers : MAX_PLAYERS_PER_ROOM,
           players: playerList
         });
       }
     }
     result.sort((a, b) => b.playerCount - a.playerCount);
     res.json(result);
+  });
+
+  app.post('/api/worlds/create', (req, res) => {
+    const { roomId, name, hostName, maxPlayers } = req.body || {};
+    const rawId = (roomId || 'world_' + Math.floor(Math.random() * 8999 + 1000)).trim().toLowerCase().replace(/[^a-z0-9_]/g, '') || 'default';
+    const serverName = (name || `Мир ${hostName || 'Стива'}`).trim().slice(0, 30);
+    const host = (hostName || 'Стив').trim().slice(0, 16);
+    const maxP = Math.min(15, Math.max(2, Number(maxPlayers) || 10));
+
+    createdWorlds.set(rawId, {
+      roomId: rawId,
+      name: serverName,
+      hostName: host,
+      maxPlayers: maxP,
+      createdAt: Date.now()
+    });
+
+    res.json({
+      success: true,
+      world: {
+        roomId: rawId,
+        serverName,
+        hostName: host,
+        maxPlayers: maxP
+      }
+    });
   });
 
   app.get('/api/room/:roomId', (req, res) => {
