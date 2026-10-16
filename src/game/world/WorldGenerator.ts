@@ -199,6 +199,48 @@ export class WorldGenerator {
       return height <= SEA_LEVEL + 1 ? BlockType.SAND : BlockType.DIRT;
     }
 
+    // --- UNDERGROUND 3D CAVES & DUNGEONS ---
+    // 3D Cave Noise Tunnel Network
+    const caveVal =
+      Math.sin(x * 0.08) * Math.cos(z * 0.08) +
+      Math.sin((x + z) * 0.05 + y * 0.18) +
+      Math.cos(y * 0.12);
+
+    const isCave = y < height - 3 && y > 1 && Math.abs(caveVal) < 0.38;
+
+    if (isCave) {
+      // Lava Pools at bottom of caves (Y <= 4)
+      if (y <= 4) {
+        return BlockType.LAVA;
+      }
+      return BlockType.AIR;
+    }
+
+    // Underground Dungeon Structure check (grid every 32 blocks at Y=6..10)
+    const dungeonX = Math.floor(x / 32) * 32 + 16;
+    const dungeonZ = Math.floor(z / 32) * 32 + 16;
+    const dx = Math.abs(x - dungeonX);
+    const dz = Math.abs(z - dungeonZ);
+
+    if (dx <= 4 && dz <= 4 && y >= 6 && y <= 10) {
+      if (dx === 4 || dz === 4 || y === 6 || y === 10) {
+        // Dungeon Wall/Floor
+        return (x + y + z) % 3 === 0 ? BlockType.MOSSY_COBBLESTONE : BlockType.COBBLESTONE;
+      } else {
+        // Dungeon Room Interior
+        if (dx === 0 && dz === 0 && y === 7) {
+          return BlockType.CHEST; // Treasure Chest at center!
+        }
+        if ((dx === 3 || dz === 3) && y === 9) {
+          return BlockType.GLOWSTONE; // Glowing lanterns
+        }
+        if (dx === 3 && y === 7) {
+          return BlockType.BOOKSHELF;
+        }
+        return BlockType.AIR;
+      }
+    }
+
     // Underground Stone with mineral ores
     const oreHash = Math.abs(Math.sin(x * 31.1 + y * 17.3 + z * 59.7) * 43758.5453) % 1;
     if (y < 10 && oreHash < 0.015) return BlockType.DIAMOND_ORE;

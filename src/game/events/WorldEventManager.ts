@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { VoxelWorld } from '../world/VoxelWorld';
-import { BlockType } from '../constants';
+import { BLOCK_DEFS, BlockType } from '../constants';
 import { SoundEffects } from '../audio/SoundEffects';
+import { PlayerStats } from '../player/PlayerStats';
+import { DroppedItemManager } from '../entities/DroppedItemEntity';
 
 export type MobType =
   | 'ZOMBIE'
@@ -24,11 +26,15 @@ export interface WorldEvent {
 export class MobEntity {
   public mesh: THREE.Group;
   public position: THREE.Vector3;
+  public velocity = new THREE.Vector3(0, 0, 0);
   public health: number;
   public maxHealth: number;
   public type: MobType;
   public isHostile: boolean;
   public moveSpeed: number;
+  public isGrounded = false;
+  public width = 0.6;
+  public height = 1.8;
 
   public headMesh?: THREE.Mesh;
   public lArm?: THREE.Mesh;
@@ -53,6 +59,9 @@ export class MobEntity {
     this.maxHealth = type === 'ENDERMAN' ? 30 : type === 'SPIDER' ? 16 : type === 'CREEPER' ? 20 : 18;
     this.health = this.maxHealth;
     this.moveSpeed = type === 'ENDERMAN' ? 2.6 : type === 'SPIDER' ? 2.2 : type === 'CREEPER' ? 1.6 : 1.8;
+
+    this.width = type === 'SPIDER' ? 0.9 : ['COW', 'PIG', 'SHEEP', 'WOLF'].includes(type) ? 0.75 : 0.6;
+    this.height = type === 'ENDERMAN' ? 2.4 : type === 'SPIDER' ? 0.8 : ['COW', 'PIG', 'SHEEP', 'WOLF'].includes(type) ? 1.2 : 1.8;
 
     this.buildModel();
   }
@@ -440,7 +449,8 @@ export class MobEntity {
     }
   }
 
-  public update(dt: number, playerPos: THREE.Vector3) {
+  public update(dt: number, playerPos: THREE.Vector3, world?: VoxelWorld) {
+    const clampedDt = Math.min(dt, 0.05);
     const toPlayer = new THREE.Vector3().subVectors(playerPos, this.position);
     toPlayer.y = 0;
     const dist = toPlayer.length();
@@ -454,22 +464,22 @@ export class MobEntity {
 
       // Creeper Explosion Fuse
       if (this.type === 'CREEPER' && dist < 2.2) {
-        this.fuseTimer += dt;
+        this.fuseTimer += clampedDt;
         const pulse = 1.0 + Math.sin(this.fuseTimer * 20) * 0.2;
         this.mesh.scale.set(pulse, pulse, pulse);
       } else if (this.type === 'CREEPER') {
-        this.fuseTimer = Math.max(0, this.fuseTimer - dt);
+        this.fuseTimer = Math.max(0, this.fuseTimer - clampedDt);
         this.mesh.scale.set(1, 1, 1);
       }
     } else {
       // Passive Animals: Wander or Flee when hit
-      this.fleeTimer = Math.max(0, this.fleeTimer - dt);
+      this.fleeTimer = Math.max(0, this.fleeTimer - clampedDt);
       if (this.fleeTimer > 0) {
         // Run away from player
         moveVector.copy(toPlayer).multiplyScalar(-1).normalize();
       } else {
         // Random Wander
-        this.wanderTimer -= dt;
+        this.wanderTimer -= clampedDt;
         if (this.wanderTimer <= 0) {
           this.wanderTimer = 3 + Math.random() * 4;
           const angle = Math.random() * Math.PI * 2;
@@ -481,14 +491,34 @@ export class MobEntity {
       }
     }
 
-    // Execute position move & rotation
-    if (moveVector.lengthSq() > 0) {
-      const spd = this.fleeTimer > 0 ? this.moveSpeed * 1.5 : this.moveSpeed;
-      this.position.addScaledVector(moveVector, dt * spd);
-      this.mesh.position.copy(this.position);
-      this.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+    const spd = this.fleeTimer > 0 ? this.moveSpeed * 1.5 : this.moveSpeed;
 
-      this.walkTime += dt * 7;
+    if (world) {
+      // Apply gravity
+      this.velocity.y -= 26.0 * clampedDt;
+
+      if (moveVector.lengthSq() > 0) {
+        this.velocity.x = moveVector.x * spd;
+        this.velocity.z = moveVector.z * spd;
+        this.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+      } else {
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+      }
+
+      // Voxel AABB Movement & Collisions
+      this.moveAndCollide(clampedDt, world);
+    } else {
+      if (moveVector.lengthSq() > 0) {
+        this.position.addScaledVector(moveVector, clampedDt * spd);
+        this.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+      }
+    }
+
+    this.mesh.position.copy(this.position);
+
+    if (moveVector.lengthSq() > 0) {
+      this.walkTime += clampedDt * 7;
       const swing = Math.sin(this.walkTime) * 0.45;
 
       // Animate legs
@@ -502,7 +532,6 @@ export class MobEntity {
         this.extraLegs[2].rotation.x = -swing;
         this.extraLegs[3].rotation.x = swing;
       } else if (this.extraLegs.length === 8) {
-        // Spider leg crawl
         this.extraLegs.forEach((leg, idx) => {
           leg.rotation.x = Math.sin(this.walkTime + idx) * 0.3;
         });
@@ -510,15 +539,200 @@ export class MobEntity {
     }
   }
 
-  public onHit(playerPos: THREE.Vector3) {
-    this.fleeTimer = 4.0; // Passive mobs flee when hit
+  private isSolidBlock(world: VoxelWorld, x: number, y: number, z: number): boolean {
+    const block = world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
+    const def = BLOCK_DEFS[block];
+    return def ? def.solid : false;
   }
+
+  private moveAndCollide(dt: number, world: VoxelWorld) {
+    this.position.y += this.velocity.y * dt;
+    this.collideY(world);
+
+    this.position.x += this.velocity.x * dt;
+    this.collideX(world);
+
+    this.position.z += this.velocity.z * dt;
+    this.collideZ(world);
+  }
+
+  private collideY(world: VoxelWorld) {
+    const halfW = this.width / 2;
+    const minX = Math.floor(this.position.x - halfW + 0.001);
+    const maxX = Math.floor(this.position.x + halfW - 0.001);
+    const minZ = Math.floor(this.position.z - halfW + 0.001);
+    const maxZ = Math.floor(this.position.z + halfW - 0.001);
+
+    this.isGrounded = false;
+
+    if (this.velocity.y <= 0) {
+      const checkY = Math.floor(this.position.y);
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (this.isSolidBlock(world, x, checkY, z)) {
+            this.position.y = checkY + 1.0;
+            this.velocity.y = 0;
+            this.isGrounded = true;
+            return;
+          }
+        }
+      }
+    } else {
+      const checkY = Math.floor(this.position.y + this.height);
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (this.isSolidBlock(world, x, checkY, z)) {
+            this.position.y = checkY - this.height - 0.001;
+            this.velocity.y = 0;
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private collideX(world: VoxelWorld) {
+    const halfW = this.width / 2;
+    const minY = Math.floor(this.position.y + 0.01);
+    const maxY = Math.floor(this.position.y + this.height - 0.01);
+    const minZ = Math.floor(this.position.z - halfW + 0.001);
+    const maxZ = Math.floor(this.position.z + halfW - 0.001);
+
+    if (this.velocity.x > 0) {
+      const checkX = Math.floor(this.position.x + halfW);
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (this.isSolidBlock(world, checkX, y, z)) {
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, checkX, y + 1, z)
+            ) {
+              this.position.y = stepTop;
+              return;
+            }
+            if (this.isGrounded) {
+              this.velocity.y = 7.5; // Jump obstacle!
+            }
+            this.position.x = checkX - halfW - 0.001;
+            this.velocity.x = 0;
+            return;
+          }
+        }
+      }
+    } else if (this.velocity.x < 0) {
+      const checkX = Math.floor(this.position.x - halfW);
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (this.isSolidBlock(world, checkX, y, z)) {
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, checkX, y + 1, z)
+            ) {
+              this.position.y = stepTop;
+              return;
+            }
+            if (this.isGrounded) {
+              this.velocity.y = 7.5; // Jump obstacle!
+            }
+            this.position.x = checkX + halfW + 0.001;
+            this.velocity.x = 0;
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private collideZ(world: VoxelWorld) {
+    const halfW = this.width / 2;
+    const minY = Math.floor(this.position.y + 0.01);
+    const maxY = Math.floor(this.position.y + this.height - 0.01);
+    const minX = Math.floor(this.position.x - halfW + 0.001);
+    const maxX = Math.floor(this.position.x + halfW - 0.001);
+
+    if (this.velocity.z > 0) {
+      const checkZ = Math.floor(this.position.z + halfW);
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          if (this.isSolidBlock(world, x, y, checkZ)) {
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, x, y + 1, checkZ)
+            ) {
+              this.position.y = stepTop;
+              return;
+            }
+            if (this.isGrounded) {
+              this.velocity.y = 7.5; // Jump obstacle!
+            }
+            this.position.z = checkZ - halfW - 0.001;
+            this.velocity.z = 0;
+            return;
+          }
+        }
+      }
+    } else if (this.velocity.z < 0) {
+      const checkZ = Math.floor(this.position.z - halfW);
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          if (this.isSolidBlock(world, x, y, checkZ)) {
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, x, y + 1, checkZ)
+            ) {
+              this.position.y = stepTop;
+              return;
+            }
+            if (this.isGrounded) {
+              this.velocity.y = 7.5; // Jump obstacle!
+            }
+            this.position.z = checkZ + halfW + 0.001;
+            this.velocity.z = 0;
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  public onHit(playerPos: THREE.Vector3) {
+    this.fleeTimer = 4.0;
+  }
+}
+
+// Falling Meteor Entity with particle tail and explosion crater trigger
+interface ActiveMeteor {
+  mesh: THREE.Group;
+  trailParticles: THREE.Mesh[];
+  startPos: THREE.Vector3;
+  targetPos: THREE.Vector3;
+  currentPos: THREE.Vector3;
+  velocity: THREE.Vector3;
+  progress: number;
+}
+
+interface ExplosionParticle {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  life: number;
+  maxLife: number;
 }
 
 export class WorldEventManager {
   public activeEvent: WorldEvent | null = null;
   public eventTimeRemaining = 0;
   public mobs: MobEntity[] = [];
+  private activeMeteors: ActiveMeteor[] = [];
+  private explosionParticles: ExplosionParticle[] = [];
+
   private scene: THREE.Scene;
   private world: VoxelWorld;
   private ambientSpawnTimer = 0;
@@ -562,19 +776,171 @@ export class WorldEventManager {
     }
   }
 
-  private spawnMeteorShower(playerPos: THREE.Vector3) {
-    for (let i = 0; i < 4; i++) {
+  public spawnMeteorShower(playerPos: THREE.Vector3, stats?: PlayerStats) {
+    // Launch a series of 5 meteors from high sky with physics and explosion
+    for (let i = 0; i < 5; i++) {
       setTimeout(() => {
-        const mx = playerPos.x + (Math.random() - 0.5) * 18;
-        const mz = playerPos.z + (Math.random() - 0.5) * 18;
-        const my = playerPos.y;
+        const offsetAngle = Math.random() * Math.PI * 2;
+        const offsetDist = 5 + Math.random() * 22;
 
-        this.world.setBlock(mx, my, mz, BlockType.OBSIDIAN);
-        this.world.setBlock(mx + 1, my, mz, BlockType.GLOWSTONE);
-        this.world.setBlock(mx, my, mz + 1, BlockType.DIAMOND_ORE);
+        const targetX = Math.floor(playerPos.x + Math.cos(offsetAngle) * offsetDist);
+        const targetZ = Math.floor(playerPos.z + Math.sin(offsetAngle) * offsetDist);
 
-        SoundEffects.getInstance().playBreakSound();
-      }, i * 1500);
+        // Find terrain surface Y at impact target
+        let surfaceY = Math.floor(playerPos.y);
+        for (let checkY = Math.min(60, Math.floor(playerPos.y) + 15); checkY >= 2; checkY--) {
+          if (this.world.getBlock(targetX, checkY, targetZ) !== BlockType.AIR) {
+            surfaceY = checkY;
+            break;
+          }
+        }
+
+        const targetPos = new THREE.Vector3(targetX, surfaceY, targetZ);
+        const startPos = new THREE.Vector3(
+          targetX + (Math.random() - 0.5) * 30 + 15,
+          surfaceY + 50 + Math.random() * 15,
+          targetZ + (Math.random() - 0.5) * 30 + 15
+        );
+
+        this.createFallingMeteor(startPos, targetPos, stats);
+      }, i * 1600);
+    }
+  }
+
+  private createFallingMeteor(startPos: THREE.Vector3, targetPos: THREE.Vector3, stats?: PlayerStats) {
+    const meteorGroup = new THREE.Group();
+
+    // Burning glowing core
+    const coreGeo = new THREE.SphereGeometry(1.2, 8, 8);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    meteorGroup.add(coreMesh);
+
+    // Fiery outer shell blocks
+    const shellGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    const shellMat = new THREE.MeshLambertMaterial({ color: 0x111115 });
+    for (let j = 0; j < 6; j++) {
+      const rock = new THREE.Mesh(shellGeo, shellMat);
+      rock.position.set(
+        (Math.random() - 0.5) * 1.6,
+        (Math.random() - 0.5) * 1.6,
+        (Math.random() - 0.5) * 1.6
+      );
+      meteorGroup.add(rock);
+    }
+
+    meteorGroup.position.copy(startPos);
+    this.scene.add(meteorGroup);
+
+    const velocity = targetPos.clone().sub(startPos).normalize().multiplyScalar(42.0); // 42 units/sec speed
+
+    this.activeMeteors.push({
+      mesh: meteorGroup,
+      trailParticles: [],
+      startPos,
+      targetPos,
+      currentPos: startPos.clone(),
+      velocity,
+      progress: 0,
+    });
+  }
+
+  private createExplosionEffectsAndCrater(impactPos: THREE.Vector3, stats?: PlayerStats) {
+    const cx = Math.floor(impactPos.x);
+    const cy = Math.floor(impactPos.y);
+    const cz = Math.floor(impactPos.z);
+
+    // 1. Play Heavy Explosion Sound & Screen Shake
+    SoundEffects.getInstance().playExplosionSound();
+    if (stats) {
+      stats.screenShakeTimer = 0.7;
+      stats.damageFlashTimer = 0.35;
+    }
+
+    // 2. Spawn 45 Fiery Explosion Particles (embers, smoke, fire)
+    const particleGeo = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+    const fireColors = [0xff4500, 0xff8c00, 0xffd700, 0x333333, 0x111111];
+
+    for (let i = 0; i < 45; i++) {
+      const color = fireColors[Math.floor(Math.random() * fireColors.length)];
+      const mat = new THREE.MeshBasicMaterial({ color });
+      const pMesh = new THREE.Mesh(particleGeo, mat);
+
+      pMesh.position.set(
+        impactPos.x + (Math.random() - 0.5) * 1.5,
+        impactPos.y + (Math.random() - 0.5) * 1.5,
+        impactPos.z + (Math.random() - 0.5) * 1.5
+      );
+
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 14,
+        Math.random() * 12 + 4,
+        (Math.random() - 0.5) * 14
+      );
+
+      this.scene.add(pMesh);
+      this.explosionParticles.push({
+        mesh: pMesh,
+        velocity: vel,
+        life: 0,
+        maxLife: 0.6 + Math.random() * 0.5,
+      });
+    }
+
+    // 3. EXCAVATE SPHERICAL CRATER & PLACE METEORITE ORES / OBSIDIAN
+    const craterRadius = 3.6;
+    const rSq = craterRadius * craterRadius;
+
+    for (let dx = -4; dx <= 4; dx++) {
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dz = -4; dz <= 4; dz++) {
+          const distSq = dx * dx + dy * dy + dz * dz;
+          if (distSq <= rSq) {
+            const bx = cx + dx;
+            const by = cy + dy;
+            const bz = cz + dz;
+
+            if (by <= 1) continue; // Keep bedrock safe
+
+            const existingBlock = this.world.getBlock(bx, by, bz);
+            if (existingBlock === BlockType.BEDROCK) continue;
+
+            const dist = Math.sqrt(distSq);
+
+            if (dist < craterRadius - 0.9) {
+              // Inner core: Hollow out air crater!
+              this.world.setBlock(bx, by, bz, BlockType.AIR);
+            } else {
+              // Outer lining/bottom of crater: replace with obsidian, glowstone, ores & scorched ground
+              const rand = Math.random();
+              if (rand < 0.35) {
+                this.world.setBlock(bx, by, bz, BlockType.OBSIDIAN);
+              } else if (rand < 0.55) {
+                this.world.setBlock(bx, by, bz, BlockType.GLOWSTONE);
+              } else if (rand < 0.70) {
+                this.world.setBlock(bx, by, bz, BlockType.DIAMOND_ORE);
+              } else if (rand < 0.85) {
+                this.world.setBlock(bx, by, bz, BlockType.GOLD_ORE);
+              } else {
+                this.world.setBlock(bx, by, bz, BlockType.COBBLESTONE);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Place central molten meteor core at crater bottom
+    this.world.setBlock(cx, Math.max(2, cy - 2), cz, BlockType.OBSIDIAN);
+    this.world.setBlock(cx, Math.max(3, cy - 1), cz, BlockType.GLOWSTONE);
+
+    // 4. Damage player if close to crater explosion radius
+    if (stats) {
+      const distToPlayer = impactPos.distanceTo(stats ? stats as unknown as THREE.Vector3 : impactPos);
+      if (distToPlayer < 5.5) {
+        const dmg = Math.max(3, Math.floor((6.0 - distToPlayer) * 2.5));
+        stats.takeDamage(dmg);
+      }
     }
   }
 
@@ -587,7 +953,7 @@ export class WorldEventManager {
     SoundEffects.getInstance().playPlaceSound();
   }
 
-  public update(dt: number, playerPos: THREE.Vector3, isNight = false) {
+  public update(dt: number, playerPos: THREE.Vector3, isNight = false, stats?: PlayerStats) {
     if (this.eventTimeRemaining > 0) {
       this.eventTimeRemaining -= dt;
       if (this.eventTimeRemaining <= 0) {
@@ -604,7 +970,45 @@ export class WorldEventManager {
       }
     }
 
-    this.mobs.forEach((mob) => mob.update(dt, playerPos));
+    this.mobs.forEach((mob) => mob.update(dt, playerPos, this.world));
+
+    // Update active falling meteors
+    for (let i = this.activeMeteors.length - 1; i >= 0; i--) {
+      const m = this.activeMeteors[i];
+      m.currentPos.addScaledVector(m.velocity, dt);
+      m.mesh.position.copy(m.currentPos);
+      m.mesh.rotation.x += dt * 5;
+      m.mesh.rotation.y += dt * 7;
+
+      // Check ground collision / target reached
+      if (
+        m.currentPos.y <= m.targetPos.y ||
+        m.currentPos.distanceTo(m.startPos) >= m.startPos.distanceTo(m.targetPos)
+      ) {
+        this.scene.remove(m.mesh);
+        this.createExplosionEffectsAndCrater(m.targetPos, stats);
+        this.activeMeteors.splice(i, 1);
+      }
+    }
+
+    // Update explosion particles
+    for (let i = this.explosionParticles.length - 1; i >= 0; i--) {
+      const p = this.explosionParticles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        this.scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        (p.mesh.material as THREE.Material).dispose();
+        this.explosionParticles.splice(i, 1);
+        continue;
+      }
+
+      p.velocity.y -= 16.0 * dt; // Gravity on particles
+      p.mesh.position.addScaledVector(p.velocity, dt);
+
+      const scale = Math.max(0.01, 1 - p.life / p.maxLife);
+      p.mesh.scale.setScalar(scale);
+    }
   }
 
   private spawnAmbientMob(playerPos: THREE.Vector3, isNight: boolean) {
@@ -629,7 +1033,7 @@ export class WorldEventManager {
     this.scene.add(mob.mesh);
   }
 
-  public attackMobWithRay(camPos: THREE.Vector3, camDir: THREE.Vector3, maxDist = 5.5): boolean {
+  public attackMobWithRay(camPos: THREE.Vector3, camDir: THREE.Vector3, maxDist = 5.5, dropManager?: DroppedItemManager): boolean {
     let closestMobIdx = -1;
     let minMobDist = maxDist;
 
@@ -663,6 +1067,9 @@ export class WorldEventManager {
       SoundEffects.getInstance().playBreakSound();
 
       if (mob.health <= 0) {
+        if (dropManager) {
+          dropManager.spawnMobLoot(mob.type, mob.position);
+        }
         this.scene.remove(mob.mesh);
         this.mobs.splice(closestMobIdx, 1);
         SoundEffects.getInstance().playPopSound();

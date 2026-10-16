@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, Share2, Volume2, VolumeX, Eye, Feather, HelpCircle, Check, Copy, X, Pause } from 'lucide-react';
+import { Users, Share2, Volume2, VolumeX, Eye, Feather, HelpCircle, Check, Copy, X, Pause, Trophy, FlaskConical } from 'lucide-react';
 import { SoundEffects } from '../game/audio/SoundEffects';
 
 interface GameUIProps {
@@ -10,6 +10,8 @@ interface GameUIProps {
   onToggleFly: () => void;
   onToggleCamera: () => void;
   onExitGame: () => void;
+  onOpenAchievements?: () => void;
+  onOpenBrewing?: () => void;
 }
 
 export const GameUI: React.FC<GameUIProps> = ({
@@ -20,6 +22,8 @@ export const GameUI: React.FC<GameUIProps> = ({
   onToggleFly,
   onToggleCamera,
   onExitGame,
+  onOpenAchievements,
+  onOpenBrewing,
 }) => {
   const [isPaused, setIsPaused] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -66,6 +70,28 @@ export const GameUI: React.FC<GameUIProps> = ({
 
       {/* Top Right Controls */}
       <div className="absolute top-4 right-4 flex items-center gap-2 pointer-events-auto">
+        {onOpenAchievements && (
+          <button
+            onClick={onOpenAchievements}
+            className="p-2.5 rounded-2xl bg-amber-950/80 backdrop-blur-md border border-amber-500/50 text-amber-300 hover:bg-amber-900/90 transition-colors shadow-lg flex items-center gap-1 text-xs font-bold px-3"
+            title="Квесты и Достижения"
+          >
+            <Trophy className="w-4 h-4 text-amber-400" />
+            <span className="hidden sm:inline">Квесты</span>
+          </button>
+        )}
+
+        {onOpenBrewing && (
+          <button
+            onClick={onOpenBrewing}
+            className="p-2.5 rounded-2xl bg-purple-950/80 backdrop-blur-md border border-purple-500/50 text-purple-300 hover:bg-purple-900/90 transition-colors shadow-lg flex items-center gap-1 text-xs font-bold px-3"
+            title="Зелья и Алхимия"
+          >
+            <FlaskConical className="w-4 h-4 text-purple-400" />
+            <span className="hidden sm:inline">Зелья</span>
+          </button>
+        )}
+
         <button
           onClick={handleToggleMute}
           className="p-2.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/20 text-white hover:bg-black/80 transition-colors"

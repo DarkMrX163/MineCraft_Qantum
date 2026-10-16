@@ -12,6 +12,7 @@ import { ChatMessage } from './game/network/types';
 import { WorldEventManager, WorldEvent } from './game/events/WorldEventManager';
 import { PlayerStats } from './game/player/PlayerStats';
 import { BlockBreakParticles } from './game/particles/BlockBreakParticles';
+import { DroppedItemManager, ItemStack } from './game/entities/DroppedItemEntity';
 
 import { TitleScreen } from './components/TitleScreen';
 import { GameUI } from './components/GameUI';
@@ -22,6 +23,9 @@ import { CraftingModal } from './components/CraftingModal';
 import { EventBanner } from './components/EventBanner';
 import { Minimap } from './components/Minimap';
 import { PlayerStatsBar } from './components/PlayerStatsBar';
+import { AchievementsModal } from './components/AchievementsModal';
+import { BrewingModal } from './components/BrewingModal';
+import { InventoryModal } from './components/InventoryModal';
 
 function isBlockIntersectingPlayer(
   blockX: number,
@@ -67,8 +71,36 @@ export default function App() {
 
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [craftingGridSize, setCraftingGridSize] = useState<2 | 3 | null>(null);
+  const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
+  const [isBrewingOpen, setIsBrewingOpen] = useState(false);
   const [isFlying, setIsFlying] = useState(false);
   const [cameraMode, setCameraMode] = useState<'FIRST_PERSON' | 'THIRD_PERSON'>('FIRST_PERSON');
+
+  // Minecraft Inventory & Hotbar Grids
+  const [inventoryGrid, setInventoryGrid] = useState<(ItemStack | null)[]>([
+    { itemId: BlockType.WOOD, count: 16 },
+    { itemId: BlockType.COBBLESTONE, count: 32 },
+    { itemId: BlockType.PLANKS, count: 24 },
+    { itemId: 111 /* DIAMOND */, count: 4 },
+    { itemId: 109 /* IRON_INGOT */, count: 8 },
+    { itemId: 122 /* RAW_MEAT */, count: 6 },
+    { itemId: 101 /* STICK */, count: 12 },
+    ...Array(20).fill(null),
+  ]);
+
+  const [hotbarGrid, setHotbarGrid] = useState<(ItemStack | null)[]>([
+    { itemId: BlockType.GRASS, count: 64 },
+    { itemId: BlockType.DIRT, count: 64 },
+    { itemId: BlockType.STONE, count: 64 },
+    { itemId: BlockType.WOOD, count: 32 },
+    { itemId: BlockType.CRAFTING_TABLE, count: 4 },
+    { itemId: 105 /* DIAMOND_PICKAXE */, count: 1 },
+    { itemId: 107 /* DIAMOND_SWORD */, count: 1 },
+    { itemId: 122 /* RAW_MEAT */, count: 10 },
+    { itemId: BlockType.GLOWSTONE, count: 16 },
+  ]);
+
+  const [selectedHotbarIdx, setSelectedHotbarIdx] = useState(0);
 
   const [activeEvent, setActiveEvent] = useState<WorldEvent | null>(null);
   const [eventTimer, setEventTimer] = useState(0);
@@ -82,6 +114,8 @@ export default function App() {
 
   const [health, setHealth] = useState(20);
   const [hunger, setHunger] = useState(20);
+  const [oxygen, setOxygen] = useState(10);
+  const [maxOxygen, setMaxOxygen] = useState(10);
   const [armorPoints, setArmorPoints] = useState(0);
   const [isDead, setIsDead] = useState(false);
   const [damageFlash, setDamageFlash] = useState(false);
@@ -98,6 +132,7 @@ export default function App() {
   const eventManagerRef = useRef<WorldEventManager | null>(null);
   const statsRef = useRef<PlayerStats>(new PlayerStats());
   const particlesRef = useRef<BlockBreakParticles | null>(null);
+  const droppedItemManagerRef = useRef<DroppedItemManager | null>(null);
 
   const cameraYawRef = useRef(0);
   const cameraPitchRef = useRef(0);
@@ -111,6 +146,44 @@ export default function App() {
     if (handRef.current) {
       handRef.current.setHeldBlock(b);
     }
+  };
+
+  const handlePickupItem = (item: ItemStack): boolean => {
+    let placed = false;
+    setHotbarGrid((prev) => {
+      const next = [...prev];
+      for (let i = 0; i < next.length; i++) {
+        if (next[i] && next[i]!.itemId === item.itemId && next[i]!.count < 64) {
+          next[i] = { ...next[i]!, count: next[i]!.count + item.count };
+          placed = true;
+          return next;
+        }
+      }
+      return next;
+    });
+
+    if (placed) return true;
+
+    setInventoryGrid((prev) => {
+      const next = [...prev];
+      for (let i = 0; i < next.length; i++) {
+        if (next[i] && next[i]!.itemId === item.itemId && next[i]!.count < 64) {
+          next[i] = { ...next[i]!, count: next[i]!.count + item.count };
+          placed = true;
+          return next;
+        }
+      }
+      for (let i = 0; i < next.length; i++) {
+        if (!next[i]) {
+          next[i] = { ...item };
+          placed = true;
+          return next;
+        }
+      }
+      return next;
+    });
+
+    return placed;
   };
 
   useEffect(() => {
@@ -181,6 +254,9 @@ export default function App() {
 
     const breakParticles = new BlockBreakParticles(scene);
     particlesRef.current = breakParticles;
+
+    const dropManager = new DroppedItemManager(scene);
+    droppedItemManagerRef.current = dropManager;
 
     const hand = new FirstPersonHand();
     handRef.current = hand;
@@ -303,7 +379,12 @@ export default function App() {
 
       if (e.code === 'KeyF') setIsFlying((prev) => !prev);
       if (e.code === 'F5') { e.preventDefault(); setCameraMode((prev) => (prev === 'FIRST_PERSON' ? 'THIRD_PERSON' : 'FIRST_PERSON')); }
-      if (e.code === 'KeyE') setCraftingGridSize(2);
+      if (e.code === 'KeyE') {
+        setIsInventoryOpen((prev) => {
+          if (!prev) document.exitPointerLock();
+          return !prev;
+        });
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -322,8 +403,8 @@ export default function App() {
       if (e.button === 0) {
         hand.triggerSwing();
 
-        // 1. Attack Mob with 3D raycast
-        if (eventManagerRef.current && eventManagerRef.current.attackMobWithRay(camera.position, camDir, 5.5)) {
+        // 1. Attack Mob with 3D raycast & drop loot
+        if (eventManagerRef.current && eventManagerRef.current.attackMobWithRay(camera.position, camDir, 5.5, droppedItemManagerRef.current || undefined)) {
           return;
         }
 
@@ -333,6 +414,16 @@ export default function App() {
 
         const oldBlock = voxelWorld.getBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z);
         voxelWorld.setBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z, BlockType.AIR);
+
+        statsRef.current.unlockAchievement('first_dig', 'Первый блок', 'Добудьте или сломайте первый блок!');
+
+        if (droppedItemManagerRef.current && oldBlock !== BlockType.AIR && oldBlock !== BlockType.BEDROCK) {
+          droppedItemManagerRef.current.spawnDrop(
+            oldBlock,
+            1,
+            new THREE.Vector3(hit.blockPos.x + 0.5, hit.blockPos.y + 0.5, hit.blockPos.z + 0.5)
+          );
+        }
 
         if (particlesRef.current) {
           particlesRef.current.spawnBreakBurst(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z, oldBlock);
@@ -347,6 +438,12 @@ export default function App() {
 
         if (hit.blockType === BlockType.CRAFTING_TABLE) {
           setCraftingGridSize(3);
+          document.exitPointerLock();
+          return;
+        }
+
+        if (hit.blockType === BlockType.BREWING_STAND) {
+          setIsBrewingOpen(true);
           document.exitPointerLock();
           return;
         }
@@ -388,19 +485,34 @@ export default function App() {
 
       const isPlayerMoving = moveInputRef.current.x !== 0 || moveInputRef.current.z !== 0;
 
-      statsRef.current.update(dt, playerY, playerPhysics.isGrounded, isPlayerMoving);
+      statsRef.current.update(
+        dt,
+        playerY,
+        playerPhysics.isGrounded,
+        isPlayerMoving,
+        playerPhysics.isSubmerged
+      );
 
       const roundedHealth = Math.round(statsRef.current.health * 2) / 2;
       const roundedHunger = Math.round(statsRef.current.hunger * 2) / 2;
+      const roundedOxygen = Math.round(statsRef.current.oxygen * 10) / 10;
       const totalArmor = statsRef.current.getTotalArmorPoints();
       const deadState = statsRef.current.isDead;
       const flashState = statsRef.current.damageFlashTimer > 0;
 
       if (roundedHealth !== health) setHealth(roundedHealth);
       if (roundedHunger !== hunger) setHunger(roundedHunger);
+      if (roundedOxygen !== oxygen) setOxygen(roundedOxygen);
       if (totalArmor !== armorPoints) setArmorPoints(totalArmor);
       if (deadState !== isDead) setIsDead(deadState);
-      if (flashState !== damageFlash) setDamageFlash(flashState);
+      if (droppedItemManagerRef.current && worldRef.current && physicsRef.current) {
+        droppedItemManagerRef.current.update(
+          dt,
+          worldRef.current,
+          physicsRef.current.position,
+          handlePickupItem
+        );
+      }
 
       mobAttackTimer += dt;
       if (mobAttackTimer > 1.5) {
@@ -448,6 +560,12 @@ export default function App() {
         currentSunIntensity = 0.25;
       }
 
+      // Night Vision Potion Effect
+      if (statsRef.current.nightVisionTimer > 0) {
+        currentSunIntensity = Math.max(currentSunIntensity, 1.2);
+        currentSkyColor = new THREE.Color(0x38bdf8);
+      }
+
       scene.background = currentSkyColor;
       if (scene.fog) scene.fog.color = currentSkyColor;
       sunLight.color = currentSunColor;
@@ -468,7 +586,8 @@ export default function App() {
       const sneakReq = keysPressedRef.current['ShiftLeft'] || false;
 
       playerPhysics.isFlying = isFlying;
-      playerPhysics.update(dt, moveInputRef.current, cameraYawRef.current, jumpReq, sneakReq, voxelWorld);
+      const speedMult = statsRef.current.speedPotionTimer > 0 ? 1.6 : 1.0;
+      playerPhysics.update(dt, moveInputRef.current, cameraYawRef.current, jumpReq, sneakReq, voxelWorld, speedMult);
 
       voxelWorld.updateChunksAroundPlayer(playerX, playerZ);
 
@@ -502,7 +621,7 @@ export default function App() {
       }
 
       const isNight = dayTime < 0.2 || dayTime > 0.8;
-      eventManager.update(dt, playerPhysics.position, isNight);
+      eventManager.update(dt, playerPhysics.position, isNight, statsRef.current);
       setEventTimer(eventManager.eventTimeRemaining);
 
       let camShakeX = 0;
@@ -669,9 +788,12 @@ export default function App() {
         maxHealth={20}
         hunger={hunger}
         maxHunger={20}
+        oxygen={oxygen}
+        maxOxygen={maxOxygen}
         armorPoints={armorPoints}
         isDead={isDead}
         damageFlash={damageFlash}
+        recentAchievement={statsRef.current.recentAchievementPopup}
         onEatFood={() => statsRef.current.eatFood(5)}
         onRespawn={() => {
           statsRef.current.respawn(25);
@@ -691,6 +813,8 @@ export default function App() {
         onToggleFly={() => setIsFlying((prev) => !prev)}
         onToggleCamera={() => setCameraMode((prev) => (prev === 'FIRST_PERSON' ? 'THIRD_PERSON' : 'FIRST_PERSON'))}
         onExitGame={() => setGameState('TITLE')}
+        onOpenAchievements={() => setIsAchievementsOpen(true)}
+        onOpenBrewing={() => setIsBrewingOpen(true)}
       />
 
       {/* Multiplayer Chat Overlay */}
@@ -725,11 +849,67 @@ export default function App() {
             if (itemId <= 24) {
               changeSelectedBlock(itemId as BlockType);
             }
+            statsRef.current.unlockAchievement('master_crafter', 'Мастер-крафтер', 'Скрафтили предмет!');
             SoundEffects.getInstance().playPopSound();
           }}
           onEquipArmor={(itemId) => {
             statsRef.current.equipArmor(itemId);
             setArmorPoints(statsRef.current.getTotalArmorPoints());
+          }}
+        />
+      )}
+
+      {/* Achievements Modal */}
+      {isAchievementsOpen && (
+        <AchievementsModal
+          completedIds={statsRef.current.completedAchievements}
+          onClose={() => setIsAchievementsOpen(false)}
+        />
+      )}
+
+      {/* Full Minecraft Inventory Modal */}
+      <InventoryModal
+        isOpen={isInventoryOpen}
+        onClose={() => setIsInventoryOpen(false)}
+        inventoryGrid={inventoryGrid}
+        hotbarGrid={hotbarGrid}
+        selectedHotbarIdx={selectedHotbarIdx}
+        onSelectHotbarIdx={(idx) => {
+          setSelectedHotbarIdx(idx);
+          const item = hotbarGrid[idx];
+          if (item && item.itemId <= 31) {
+            changeSelectedBlock(item.itemId as BlockType);
+          }
+        }}
+        onUpdateInventory={(newInv, newHotbar) => {
+          setInventoryGrid(newInv);
+          setHotbarGrid(newHotbar);
+          const currentHotbarItem = newHotbar[selectedHotbarIdx];
+          if (currentHotbarItem && currentHotbarItem.itemId <= 31) {
+            changeSelectedBlock(currentHotbarItem.itemId as BlockType);
+          }
+        }}
+        onThrowItem={(item) => {
+          if (droppedItemManagerRef.current && physicsRef.current && cameraRef.current) {
+            const camDir = new THREE.Vector3();
+            cameraRef.current.getWorldDirection(camDir);
+            const dropPos = physicsRef.current.position
+              .clone()
+              .add(camDir.clone().multiplyScalar(1.2))
+              .add(new THREE.Vector3(0, 1.0, 0));
+            droppedItemManagerRef.current.spawnDrop(item.itemId, item.count, dropPos);
+          }
+        }}
+        playerStats={statsRef.current}
+      />
+
+      {/* Alchemy & Brewing Lab Modal */}
+      {isBrewingOpen && (
+        <BrewingModal
+          onClose={() => setIsBrewingOpen(false)}
+          onDrinkPotion={(itemId) => {
+            statsRef.current.drinkPotion(itemId);
+            setHealth(Math.round(statsRef.current.health * 2) / 2);
           }}
         />
       )}

@@ -51,8 +51,36 @@ export class VoxelWorld {
     const by = Math.floor(y);
     const bz = Math.floor(z);
 
+    // Water + Lava -> Obsidian reaction check
+    let finalBlock = blockType;
+    if (blockType === BlockType.WATER) {
+      const neighbors = [
+        this.getBlock(bx + 1, by, bz),
+        this.getBlock(bx - 1, by, bz),
+        this.getBlock(bx, by + 1, bz),
+        this.getBlock(bx, by - 1, bz),
+        this.getBlock(bx, by, bz + 1),
+        this.getBlock(bx, by, bz - 1),
+      ];
+      if (neighbors.includes(BlockType.LAVA)) {
+        finalBlock = BlockType.OBSIDIAN;
+      }
+    } else if (blockType === BlockType.LAVA) {
+      const neighbors = [
+        this.getBlock(bx + 1, by, bz),
+        this.getBlock(bx - 1, by, bz),
+        this.getBlock(bx, by + 1, bz),
+        this.getBlock(bx, by - 1, bz),
+        this.getBlock(bx, by, bz + 1),
+        this.getBlock(bx, by, bz - 1),
+      ];
+      if (neighbors.includes(BlockType.WATER)) {
+        finalBlock = BlockType.OBSIDIAN;
+      }
+    }
+
     const key = this.getBlockKey(bx, by, bz);
-    this.modifiedBlocks.set(key, blockType);
+    this.modifiedBlocks.set(key, finalBlock);
 
     if (!notify) return;
 

@@ -103,6 +103,15 @@ export class TextureManager {
       cactus_side: [5, 4],
       ice: [6, 4],
       snow_leaves: [7, 4],
+
+      item_iron_ingot: [0, 5],
+      item_diamond: [1, 5],
+      item_iron_helmet: [2, 5],
+      item_iron_chestplate: [3, 5],
+      item_iron_leggings: [4, 5],
+      item_diamond_helmet: [5, 5],
+      item_diamond_chestplate: [6, 5],
+      item_diamond_leggings: [7, 5],
     };
 
     for (const [name, [col, row]] of Object.entries(tiles)) {
@@ -518,6 +527,81 @@ export class TextureManager {
     this.drawTile(ctx, 'item_chestplate', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(2, 2, 12, 12); });
     this.drawTile(ctx, 'item_leggings', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(2, 2, 12, 12); });
 
+    // Iron Ingot
+    this.drawTile(ctx, 'item_iron_ingot', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#4b5563'; tctx.fillRect(3, 5, 10, 6);
+      tctx.fillStyle = '#d1d5db'; tctx.fillRect(4, 6, 8, 4);
+      tctx.fillStyle = '#f9fafb'; tctx.fillRect(4, 6, 8, 1);
+      tctx.fillStyle = '#9ca3af'; tctx.fillRect(4, 9, 8, 1);
+    });
+
+    // Diamond
+    this.drawTile(ctx, 'item_diamond', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#0284c7'; tctx.fillRect(5, 3, 6, 10); tctx.fillRect(3, 5, 10, 6);
+      tctx.fillStyle = '#38bdf8'; tctx.fillRect(4, 4, 8, 8);
+      tctx.fillStyle = '#e0f2fe'; tctx.fillRect(5, 5, 3, 3);
+    });
+
+    // Iron Helmet
+    this.drawTile(ctx, 'item_iron_helmet', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#374151'; tctx.fillRect(3, 3, 10, 9);
+      tctx.fillStyle = '#d1d5db'; tctx.fillRect(4, 4, 8, 7);
+      tctx.fillStyle = '#f9fafb'; tctx.fillRect(5, 4, 3, 2);
+      tctx.clearRect(6, 8, 4, 3);
+    });
+
+    // Iron Chestplate
+    this.drawTile(ctx, 'item_iron_chestplate', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#374151'; tctx.fillRect(2, 2, 12, 12);
+      tctx.clearRect(6, 2, 4, 3);
+      tctx.fillStyle = '#d1d5db'; tctx.fillRect(3, 3, 10, 10);
+      tctx.clearRect(6, 3, 4, 2);
+      tctx.fillStyle = '#f9fafb'; tctx.fillRect(3, 4, 2, 4);
+    });
+
+    // Iron Leggings
+    this.drawTile(ctx, 'item_iron_leggings', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#374151'; tctx.fillRect(2, 2, 12, 12);
+      tctx.clearRect(6, 5, 4, 9);
+      tctx.fillStyle = '#d1d5db'; tctx.fillRect(3, 3, 10, 10);
+      tctx.clearRect(6, 5, 4, 9);
+      tctx.fillStyle = '#f9fafb'; tctx.fillRect(3, 3, 2, 4);
+    });
+
+    // Diamond Helmet
+    this.drawTile(ctx, 'item_diamond_helmet', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#0369a1'; tctx.fillRect(3, 3, 10, 9);
+      tctx.fillStyle = '#38bdf8'; tctx.fillRect(4, 4, 8, 7);
+      tctx.fillStyle = '#e0f2fe'; tctx.fillRect(5, 4, 3, 2);
+      tctx.clearRect(6, 8, 4, 3);
+    });
+
+    // Diamond Chestplate
+    this.drawTile(ctx, 'item_diamond_chestplate', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#0369a1'; tctx.fillRect(2, 2, 12, 12);
+      tctx.clearRect(6, 2, 4, 3);
+      tctx.fillStyle = '#38bdf8'; tctx.fillRect(3, 3, 10, 10);
+      tctx.clearRect(6, 3, 4, 2);
+      tctx.fillStyle = '#e0f2fe'; tctx.fillRect(3, 4, 2, 4);
+    });
+
+    // Diamond Leggings
+    this.drawTile(ctx, 'item_diamond_leggings', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#0369a1'; tctx.fillRect(2, 2, 12, 12);
+      tctx.clearRect(6, 5, 4, 9);
+      tctx.fillStyle = '#38bdf8'; tctx.fillRect(3, 3, 10, 10);
+      tctx.clearRect(6, 5, 4, 9);
+      tctx.fillStyle = '#e0f2fe'; tctx.fillRect(3, 3, 2, 4);
+    });
+
     // Snow
     this.drawTile(ctx, 'snow', (tctx) => {
       tctx.fillStyle = '#f1f5f9';
@@ -676,11 +760,16 @@ export class TextureManager {
     let texName = 'stone';
 
     if (id === ItemType.STICK) texName = 'item_stick';
-    else if (id === ItemType.WOODEN_PICKAXE || id === ItemType.STONE_PICKAXE || id === ItemType.DIAMOND_PICKAXE) texName = 'item_pickaxe';
+    else if (id === ItemType.IRON_INGOT) texName = 'item_iron_ingot';
+    else if (id === ItemType.DIAMOND) texName = 'item_diamond';
+    else if (id === ItemType.WOODEN_PICKAXE || id === ItemType.STONE_PICKAXE || id === ItemType.IRON_PICKAXE || id === ItemType.DIAMOND_PICKAXE) texName = 'item_pickaxe';
     else if (id === ItemType.WOODEN_SWORD || id === ItemType.DIAMOND_SWORD) texName = 'item_sword';
-    else if (id === ItemType.IRON_HELMET || id === ItemType.DIAMOND_HELMET) texName = 'item_helmet';
-    else if (id === ItemType.IRON_CHESTPLATE || id === ItemType.DIAMOND_CHESTPLATE) texName = 'item_chestplate';
-    else if (id === ItemType.IRON_LEGGINGS || id === ItemType.DIAMOND_LEGGINGS) texName = 'item_leggings';
+    else if (id === ItemType.IRON_HELMET) texName = 'item_iron_helmet';
+    else if (id === ItemType.DIAMOND_HELMET) texName = 'item_diamond_helmet';
+    else if (id === ItemType.IRON_CHESTPLATE) texName = 'item_iron_chestplate';
+    else if (id === ItemType.DIAMOND_CHESTPLATE) texName = 'item_diamond_chestplate';
+    else if (id === ItemType.IRON_LEGGINGS) texName = 'item_iron_leggings';
+    else if (id === ItemType.DIAMOND_LEGGINGS) texName = 'item_diamond_leggings';
     else {
       switch (id as BlockType) {
         case BlockType.CRAFTING_TABLE: texName = 'crafting_table_top'; break;

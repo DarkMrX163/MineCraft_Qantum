@@ -34,6 +34,9 @@ export enum BlockType {
   CACTUS = 26,
   ICE = 27,
   SNOW_LEAVES = 28,
+  LAVA = 29,
+  MOSSY_COBBLESTONE = 30,
+  BREWING_STAND = 31,
 }
 
 export enum ItemType {
@@ -56,6 +59,15 @@ export enum ItemType {
   DIAMOND_CHESTPLATE = 115,
   IRON_LEGGINGS = 116,
   DIAMOND_LEGGINGS = 117,
+
+  // Potions & Food
+  POTION_HEAL = 118,
+  POTION_SPEED = 119,
+  POTION_NIGHT_VISION = 120,
+  POTION_OXYGEN = 121,
+  RAW_MEAT = 122,
+  COOKED_MEAT = 123,
+  BONE = 124,
 }
 
 export interface BlockDefinition {
@@ -99,6 +111,9 @@ export const BLOCK_DEFS: Record<BlockType, BlockDefinition> = {
   [BlockType.CACTUS]: { id: BlockType.CACTUS, name: 'Cactus', nameRu: 'Кактус', color: '#2d7a32', solid: true, transparent: false, soundType: 'grass' },
   [BlockType.ICE]: { id: BlockType.ICE, name: 'Ice', nameRu: 'Лёд', color: '#90d5ec', solid: true, transparent: true, soundType: 'glass' },
   [BlockType.SNOW_LEAVES]: { id: BlockType.SNOW_LEAVES, name: 'Snowy Leaves', nameRu: 'Заснеженная хвоя', color: '#dbeafe', solid: true, transparent: true, soundType: 'grass' },
+  [BlockType.LAVA]: { id: BlockType.LAVA, name: 'Lava', nameRu: 'Лава', color: '#ef4444', solid: false, transparent: true, emissive: true, soundType: 'stone' },
+  [BlockType.MOSSY_COBBLESTONE]: { id: BlockType.MOSSY_COBBLESTONE, name: 'Mossy Cobblestone', nameRu: 'Замшелый булыжник', color: '#4d6b52', solid: true, transparent: false, soundType: 'stone' },
+  [BlockType.BREWING_STAND]: { id: BlockType.BREWING_STAND, name: 'Brewing Stand', nameRu: 'Зельеварка', color: '#c084fc', solid: true, transparent: false, emissive: true, soundType: 'glass' },
 };
 
 export const SELECTABLE_BLOCKS: BlockType[] = [
@@ -108,9 +123,11 @@ export const SELECTABLE_BLOCKS: BlockType[] = [
   BlockType.SAND,
   BlockType.STONE,
   BlockType.COBBLESTONE,
+  BlockType.MOSSY_COBBLESTONE,
   BlockType.WOOD,
   BlockType.PLANKS,
   BlockType.CRAFTING_TABLE,
+  BlockType.BREWING_STAND,
   BlockType.CHEST,
   BlockType.LEAVES,
   BlockType.SNOW_LEAVES,
@@ -122,6 +139,7 @@ export const SELECTABLE_BLOCKS: BlockType[] = [
   BlockType.DIAMOND_ORE,
   BlockType.GOLD_ORE,
   BlockType.IRON_ORE,
+  BlockType.LAVA,
   BlockType.OBSIDIAN,
   BlockType.BOOKSHELF,
   BlockType.TNT,
@@ -206,7 +224,75 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     result: { itemId: ItemType.DIAMOND_SWORD, count: 1 },
   },
 
-  // Armor Recipes
+  // Armor Recipes - Iron
+  {
+    id: 'iron_helmet',
+    nameRu: 'Железный шлем',
+    gridSize: 3,
+    pattern: [
+      ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT,
+      ItemType.IRON_INGOT, null,                ItemType.IRON_INGOT,
+      null,                null,                null
+    ],
+    result: { itemId: ItemType.IRON_HELMET, count: 1 },
+  },
+  {
+    id: 'iron_helmet_ore',
+    nameRu: 'Железный шлем',
+    gridSize: 3,
+    pattern: [
+      BlockType.IRON_ORE, BlockType.IRON_ORE, BlockType.IRON_ORE,
+      BlockType.IRON_ORE, null,               BlockType.IRON_ORE,
+      null,               null,               null
+    ],
+    result: { itemId: ItemType.IRON_HELMET, count: 1 },
+  },
+  {
+    id: 'iron_chestplate',
+    nameRu: 'Железный нагрудник',
+    gridSize: 3,
+    pattern: [
+      ItemType.IRON_INGOT, null,                ItemType.IRON_INGOT,
+      ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT,
+      ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT
+    ],
+    result: { itemId: ItemType.IRON_CHESTPLATE, count: 1 },
+  },
+  {
+    id: 'iron_chestplate_ore',
+    nameRu: 'Железный нагрудник',
+    gridSize: 3,
+    pattern: [
+      BlockType.IRON_ORE, null,               BlockType.IRON_ORE,
+      BlockType.IRON_ORE, BlockType.IRON_ORE, BlockType.IRON_ORE,
+      BlockType.IRON_ORE, BlockType.IRON_ORE, BlockType.IRON_ORE
+    ],
+    result: { itemId: ItemType.IRON_CHESTPLATE, count: 1 },
+  },
+  {
+    id: 'iron_leggings',
+    nameRu: 'Железные поножи',
+    gridSize: 3,
+    pattern: [
+      ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT,
+      ItemType.IRON_INGOT, null,                ItemType.IRON_INGOT,
+      ItemType.IRON_INGOT, null,                ItemType.IRON_INGOT
+    ],
+    result: { itemId: ItemType.IRON_LEGGINGS, count: 1 },
+  },
+  {
+    id: 'iron_leggings_ore',
+    nameRu: 'Железные поножи',
+    gridSize: 3,
+    pattern: [
+      BlockType.IRON_ORE, BlockType.IRON_ORE, BlockType.IRON_ORE,
+      BlockType.IRON_ORE, null,               BlockType.IRON_ORE,
+      BlockType.IRON_ORE, null,               BlockType.IRON_ORE
+    ],
+    result: { itemId: ItemType.IRON_LEGGINGS, count: 1 },
+  },
+
+  // Armor Recipes - Diamond
   {
     id: 'diamond_helmet',
     nameRu: 'Алмазный шлем',
@@ -215,6 +301,17 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
       ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND,
       ItemType.DIAMOND, null,             ItemType.DIAMOND,
       null,             null,             null
+    ],
+    result: { itemId: ItemType.DIAMOND_HELMET, count: 1 },
+  },
+  {
+    id: 'diamond_helmet_ore',
+    nameRu: 'Алмазный шлем',
+    gridSize: 3,
+    pattern: [
+      BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE,
+      BlockType.DIAMOND_ORE, null,                  BlockType.DIAMOND_ORE,
+      null,                  null,                  null
     ],
     result: { itemId: ItemType.DIAMOND_HELMET, count: 1 },
   },
@@ -230,6 +327,17 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     result: { itemId: ItemType.DIAMOND_CHESTPLATE, count: 1 },
   },
   {
+    id: 'diamond_chestplate_ore',
+    nameRu: 'Алмазный нагрудник',
+    gridSize: 3,
+    pattern: [
+      BlockType.DIAMOND_ORE, null,                  BlockType.DIAMOND_ORE,
+      BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE,
+      BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE
+    ],
+    result: { itemId: ItemType.DIAMOND_CHESTPLATE, count: 1 },
+  },
+  {
     id: 'diamond_leggings',
     nameRu: 'Алмазные поножи',
     gridSize: 3,
@@ -237,6 +345,17 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
       ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND,
       ItemType.DIAMOND, null,             ItemType.DIAMOND,
       ItemType.DIAMOND, null,             ItemType.DIAMOND
+    ],
+    result: { itemId: ItemType.DIAMOND_LEGGINGS, count: 1 },
+  },
+  {
+    id: 'diamond_leggings_ore',
+    nameRu: 'Алмазные поножи',
+    gridSize: 3,
+    pattern: [
+      BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE, BlockType.DIAMOND_ORE,
+      BlockType.DIAMOND_ORE, null,                  BlockType.DIAMOND_ORE,
+      BlockType.DIAMOND_ORE, null,                  BlockType.DIAMOND_ORE
     ],
     result: { itemId: ItemType.DIAMOND_LEGGINGS, count: 1 },
   },

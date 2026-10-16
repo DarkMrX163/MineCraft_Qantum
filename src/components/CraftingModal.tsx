@@ -22,15 +22,17 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
   const numSlots = gridSize * gridSize;
 
   const [gridSlots, setGridSlots] = useState<(number | null)[]>(Array(numSlots).fill(null));
-  const [selectedInventoryItem, setSelectedInventoryItem] = useState<number | null>(BlockType.WOOD);
+  const [selectedInventoryItem, setSelectedInventoryItem] = useState<number | null>(ItemType.IRON_INGOT);
 
   const availableInventory = [
+    ItemType.IRON_INGOT,
+    BlockType.IRON_ORE,
+    ItemType.DIAMOND,
+    BlockType.DIAMOND_ORE,
     BlockType.WOOD,
     BlockType.PLANKS,
     BlockType.COBBLESTONE,
-    BlockType.SAND,
     ItemType.STICK,
-    ItemType.DIAMOND,
   ];
 
   const handleSlotClick = (index: number) => {
@@ -61,6 +63,18 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
 
   const matchedRecipe = checkRecipe();
 
+  const getArmorBonusText = (itemId: number) => {
+    switch (itemId) {
+      case ItemType.IRON_HELMET: return '+2 к Защите (Шлем)';
+      case ItemType.DIAMOND_HELMET: return '+3 к Защите (Шлем)';
+      case ItemType.IRON_CHESTPLATE: return '+6 к Защите (Нагрудник)';
+      case ItemType.DIAMOND_CHESTPLATE: return '+8 к Защите (Нагрудник)';
+      case ItemType.IRON_LEGGINGS: return '+4 к Защите (Поножи)';
+      case ItemType.DIAMOND_LEGGINGS: return '+6 к Защите (Поножи)';
+      default: return null;
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto animate-in fade-in duration-200">
       <div className="bg-stone-900 border-2 border-amber-500/50 rounded-3xl p-6 max-w-xl w-full shadow-2xl flex flex-col">
@@ -69,7 +83,7 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
           <div className="flex items-center gap-2">
             <Hammer className="w-6 h-6 text-amber-400" />
             <h2 className="text-xl font-black text-amber-400">
-              {gridSize === 3 ? 'Крафт на Верстаке (3x3)' : 'Инвентарь & Снаряжение (2x2)'}
+              {gridSize === 3 ? 'Крафт Брони на Верстаке (3x3)' : 'Инвентарь & Снаряжение (2x2)'}
             </h2>
           </div>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-stone-800 text-stone-400 hover:text-white">
@@ -114,61 +128,91 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
           </div>
         </div>
 
-        {/* Quick Helper Chips */}
-        <div className="mb-2">
-          <p className="text-[11px] font-bold text-stone-400 mb-1.5 flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            Быстрый рецепт:
-          </p>
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {gridSize === 3 && (
-              <>
-                <button
-                  onClick={() => setGridSlots([ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND, null, null, null])}
-                  className="text-[11px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2.5 py-1 rounded-lg shrink-0 hover:bg-sky-500/30"
-                >
-                  🛡️ Алмазный Шлем
-                </button>
+        {/* Quick Helper Chips for Iron and Diamond Armor */}
+        {gridSize === 3 && (
+          <div className="mb-2">
+            <p className="text-[11px] font-bold text-stone-400 mb-1.5 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              Быстрая выкладка брони:
+            </p>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 overflow-x-auto pb-1">
+              {/* Iron Armor */}
+              <button
+                onClick={() => setGridSlots([ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, null, ItemType.IRON_INGOT, null, null, null])}
+                className="text-[10px] font-bold bg-slate-700/50 border border-slate-500/50 text-slate-200 px-2 py-1 rounded-lg hover:bg-slate-600/60 transition-all text-center"
+              >
+                ⚙️ Желез. Шлем
+              </button>
 
-                <button
-                  onClick={() => setGridSlots([ItemType.DIAMOND, null, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND])}
-                  className="text-[11px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2.5 py-1 rounded-lg shrink-0 hover:bg-sky-500/30"
-                >
-                  🛡️ Алмазный Нагрудник
-                </button>
+              <button
+                onClick={() => setGridSlots([ItemType.IRON_INGOT, null, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT])}
+                className="text-[10px] font-bold bg-slate-700/50 border border-slate-500/50 text-slate-200 px-2 py-1 rounded-lg hover:bg-slate-600/60 transition-all text-center"
+              >
+                ⚙️ Желез. Нагруд.
+              </button>
 
-                <button
-                  onClick={() => setGridSlots([ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND])}
-                  className="text-[11px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2.5 py-1 rounded-lg shrink-0 hover:bg-sky-500/30"
-                >
-                  🛡️ Алмазные Поножи
-                </button>
-              </>
-            )}
+              <button
+                onClick={() => setGridSlots([ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, ItemType.IRON_INGOT, null, ItemType.IRON_INGOT, ItemType.IRON_INGOT, null, ItemType.IRON_INGOT])}
+                className="text-[10px] font-bold bg-slate-700/50 border border-slate-500/50 text-slate-200 px-2 py-1 rounded-lg hover:bg-slate-600/60 transition-all text-center"
+              >
+                ⚙️ Желез. Поножи
+              </button>
+
+              {/* Diamond Armor */}
+              <button
+                onClick={() => setGridSlots([ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND, null, null, null])}
+                className="text-[10px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2 py-1 rounded-lg hover:bg-sky-500/30 transition-all text-center"
+              >
+                💎 Алмаз. Шлем
+              </button>
+
+              <button
+                onClick={() => setGridSlots([ItemType.DIAMOND, null, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND])}
+                className="text-[10px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2 py-1 rounded-lg hover:bg-sky-500/30 transition-all text-center"
+              >
+                💎 Алмаз. Нагруд.
+              </button>
+
+              <button
+                onClick={() => setGridSlots([ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND, ItemType.DIAMOND, null, ItemType.DIAMOND])}
+                className="text-[10px] font-bold bg-sky-500/20 border border-sky-500/40 text-sky-300 px-2 py-1 rounded-lg hover:bg-sky-500/30 transition-all text-center"
+              >
+                💎 Алмаз. Поножи
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Crafting Grid */}
         <div className="flex items-center justify-center gap-6 my-3 bg-stone-950/80 p-4 rounded-2xl border border-stone-800">
-          <div className={`grid gap-2 ${gridSize === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-            {gridSlots.map((slotItem, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleSlotClick(idx)}
-                className="w-14 h-14 bg-stone-800 border-2 border-stone-700 hover:border-amber-400 rounded-xl flex items-center justify-center transition-colors relative"
-              >
-                {slotItem !== null && (
-                  <img src={texManager.getIconDataUrl(slotItem)} alt="item" className="w-10 h-10 object-contain image-rendering-pixelated" />
-                )}
-              </button>
-            ))}
+          <div className="flex flex-col items-center gap-2">
+            <div className={`grid gap-2 ${gridSize === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+              {gridSlots.map((slotItem, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSlotClick(idx)}
+                  className="w-14 h-14 bg-stone-800 border-2 border-stone-700 hover:border-amber-400 rounded-xl flex items-center justify-center transition-colors relative"
+                >
+                  {slotItem !== null && (
+                    <img src={texManager.getIconDataUrl(slotItem)} alt="item" className="w-10 h-10 object-contain image-rendering-pixelated" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleClearGrid}
+              className="text-[11px] text-stone-400 hover:text-amber-400 font-bold mt-1 underline"
+            >
+              Очистить сетку
+            </button>
           </div>
 
           <ArrowRight className="w-8 h-8 text-amber-400 shrink-0 animate-pulse" />
 
           {/* Output Slot */}
-          <div className="flex flex-col items-center">
-            <div className="w-18 h-18 bg-amber-500/20 border-2 border-amber-400 rounded-2xl flex items-center justify-center relative shadow-lg shadow-amber-500/20">
+          <div className="flex flex-col items-center min-w-[130px]">
+            <div className="w-20 h-20 bg-amber-500/20 border-2 border-amber-400 rounded-2xl flex items-center justify-center relative shadow-lg shadow-amber-500/20">
               {matchedRecipe ? (
                 <>
                   <img src={texManager.getIconDataUrl(matchedRecipe.result.itemId)} alt="result" className="w-12 h-12 object-contain image-rendering-pixelated" />
@@ -180,13 +224,23 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
             </div>
 
             {matchedRecipe && (
-              <div className="flex flex-col gap-1 mt-2">
+              <div className="flex flex-col gap-1.5 mt-2.5 w-full items-center">
+                <p className="text-[11px] font-black text-amber-300 text-center">
+                  {matchedRecipe.nameRu}
+                </p>
+
+                {getArmorBonusText(matchedRecipe.result.itemId) && (
+                  <p className="text-[10px] font-bold text-sky-400 bg-sky-950/80 px-2 py-0.5 rounded-md border border-sky-800/80 text-center">
+                    🛡️ {getArmorBonusText(matchedRecipe.result.itemId)}
+                  </p>
+                )}
+
                 <button
                   onClick={() => {
                     onCraftItem(matchedRecipe.result.itemId, matchedRecipe.result.count);
                     handleClearGrid();
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs transition-transform active:scale-95 shadow-md"
+                  className="w-full py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs transition-transform active:scale-95 shadow-md"
                 >
                   СБРАФТИТЬ!
                 </button>
@@ -197,9 +251,10 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
                       onEquipArmor(matchedRecipe.result.itemId);
                       handleClearGrid();
                     }}
-                    className="px-3 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-stone-950 font-black text-xs transition-transform active:scale-95 shadow-md"
+                    className="w-full py-1.5 px-3 rounded-xl bg-sky-500 hover:bg-sky-400 text-stone-950 font-black text-xs transition-transform active:scale-95 shadow-md flex items-center justify-center gap-1"
                   >
-                    НАДЕТЬ БРОНЮ
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>НАДЕТЬ БРОНЮ</span>
                   </button>
                 )}
               </div>
@@ -209,15 +264,18 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
 
         {/* Item Selection Palette */}
         <div className="mt-2 pt-2 border-t border-stone-800">
-          <p className="text-xs font-bold text-stone-400 mb-2">Предметы для установки в сетку:</p>
-          <div className="flex gap-2 justify-center">
+          <p className="text-xs font-bold text-stone-400 mb-2 text-center">
+            Выберите материал для установки в сетку крафта:
+          </p>
+          <div className="flex flex-wrap gap-2 justify-center">
             {availableInventory.map((item) => (
               <button
                 key={item}
                 onClick={() => setSelectedInventoryItem(item)}
-                className={`w-11 h-11 rounded-xl border-2 flex items-center justify-center transition-all ${
-                  selectedInventoryItem === item ? 'bg-amber-500/30 border-amber-400 scale-105' : 'bg-stone-800 border-stone-700'
+                className={`w-11 h-11 rounded-xl border-2 flex items-center justify-center transition-all relative ${
+                  selectedInventoryItem === item ? 'bg-amber-500/30 border-amber-400 scale-105 shadow-md shadow-amber-500/20' : 'bg-stone-800 border-stone-700 hover:border-stone-500'
                 }`}
+                title={item === ItemType.IRON_INGOT ? 'Железный слиток' : item === BlockType.IRON_ORE ? 'Железная руда' : item === ItemType.DIAMOND ? 'Алмаз' : item === BlockType.DIAMOND_ORE ? 'Алмазная руда' : 'Материал'}
               >
                 <img src={texManager.getIconDataUrl(item)} alt="item" className="w-8 h-8 object-contain image-rendering-pixelated" />
               </button>
