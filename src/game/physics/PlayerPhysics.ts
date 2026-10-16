@@ -101,7 +101,7 @@ export class PlayerPhysics {
     this.isGrounded = false;
 
     if (this.velocity.y <= 0) {
-      const checkY = Math.floor(this.position.y);
+      const checkY = Math.floor(this.position.y - 0.001);
       for (let x = minX; x <= maxX; x++) {
         for (let z = minZ; z <= maxZ; z++) {
           if (this.isSolidBlock(world, x, checkY, z)) {
@@ -130,17 +130,25 @@ export class PlayerPhysics {
     const halfW = this.playerWidth / 2;
     const minY = Math.floor(this.position.y + 0.01);
     const maxY = Math.floor(this.position.y + this.playerHeight - 0.01);
-    const minZ = Math.floor(this.position.z - halfW);
-    const maxZ = Math.floor(this.position.z + halfW);
+    const minZ = Math.floor(this.position.z - halfW + 0.001);
+    const maxZ = Math.floor(this.position.z + halfW - 0.001);
 
     if (this.velocity.x > 0) {
       const checkX = Math.floor(this.position.x + halfW);
       for (let y = minY; y <= maxY; y++) {
         for (let z = minZ; z <= maxZ; z++) {
           if (this.isSolidBlock(world, checkX, y, z)) {
-            // Auto step-up check (if block above is free)
-            if (y === minY && !this.isSolidBlock(world, checkX, y + 1, z) && !this.isSolidBlock(world, Math.floor(this.position.x), y + 1, z)) {
-              this.position.y = y + 1;
+            // Auto step-up check (ensure headroom above step and player)
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, checkX, y + 1, z) &&
+              !this.isSolidBlock(world, checkX, y + 2, z) &&
+              !this.isSolidBlock(world, Math.floor(this.position.x), y + 1, z) &&
+              !this.isSolidBlock(world, Math.floor(this.position.x), y + 2, z)
+            ) {
+              this.position.y = stepTop;
               return;
             }
             this.position.x = checkX - halfW - 0.001;
@@ -154,8 +162,16 @@ export class PlayerPhysics {
       for (let y = minY; y <= maxY; y++) {
         for (let z = minZ; z <= maxZ; z++) {
           if (this.isSolidBlock(world, checkX, y, z)) {
-            if (y === minY && !this.isSolidBlock(world, checkX, y + 1, z) && !this.isSolidBlock(world, Math.floor(this.position.x), y + 1, z)) {
-              this.position.y = y + 1;
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, checkX, y + 1, z) &&
+              !this.isSolidBlock(world, checkX, y + 2, z) &&
+              !this.isSolidBlock(world, Math.floor(this.position.x), y + 1, z) &&
+              !this.isSolidBlock(world, Math.floor(this.position.x), y + 2, z)
+            ) {
+              this.position.y = stepTop;
               return;
             }
             this.position.x = checkX + halfW + 0.001;
@@ -171,16 +187,24 @@ export class PlayerPhysics {
     const halfW = this.playerWidth / 2;
     const minY = Math.floor(this.position.y + 0.01);
     const maxY = Math.floor(this.position.y + this.playerHeight - 0.01);
-    const minX = Math.floor(this.position.x - halfW);
-    const maxX = Math.floor(this.position.x + halfW);
+    const minX = Math.floor(this.position.x - halfW + 0.001);
+    const maxX = Math.floor(this.position.x + halfW - 0.001);
 
     if (this.velocity.z > 0) {
       const checkZ = Math.floor(this.position.z + halfW);
       for (let y = minY; y <= maxY; y++) {
         for (let x = minX; x <= maxX; x++) {
           if (this.isSolidBlock(world, x, y, checkZ)) {
-            if (y === minY && !this.isSolidBlock(world, x, y + 1, checkZ) && !this.isSolidBlock(world, x, y + 1, Math.floor(this.position.z))) {
-              this.position.y = y + 1;
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, x, y + 1, checkZ) &&
+              !this.isSolidBlock(world, x, y + 2, checkZ) &&
+              !this.isSolidBlock(world, x, y + 1, Math.floor(this.position.z)) &&
+              !this.isSolidBlock(world, x, y + 2, Math.floor(this.position.z))
+            ) {
+              this.position.y = stepTop;
               return;
             }
             this.position.z = checkZ - halfW - 0.001;
@@ -194,8 +218,16 @@ export class PlayerPhysics {
       for (let y = minY; y <= maxY; y++) {
         for (let x = minX; x <= maxX; x++) {
           if (this.isSolidBlock(world, x, y, checkZ)) {
-            if (y === minY && !this.isSolidBlock(world, x, y + 1, checkZ) && !this.isSolidBlock(world, x, y + 1, Math.floor(this.position.z))) {
-              this.position.y = y + 1;
+            const stepTop = y + 1;
+            if (
+              y === minY &&
+              stepTop - this.position.y <= 1.05 &&
+              !this.isSolidBlock(world, x, y + 1, checkZ) &&
+              !this.isSolidBlock(world, x, y + 2, checkZ) &&
+              !this.isSolidBlock(world, x, y + 1, Math.floor(this.position.z)) &&
+              !this.isSolidBlock(world, x, y + 2, Math.floor(this.position.z))
+            ) {
+              this.position.y = stepTop;
               return;
             }
             this.position.z = checkZ + halfW + 0.001;

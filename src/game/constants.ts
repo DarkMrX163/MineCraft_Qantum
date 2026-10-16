@@ -2,7 +2,7 @@ export const CHUNK_SIZE_X = 16;
 export const CHUNK_SIZE_Z = 16;
 export const CHUNK_HEIGHT = 64;
 export const SEA_LEVEL = 16;
-export const CHUNK_RADIUS = 3;
+export const CHUNK_RADIUS = 2;
 
 export enum BlockType {
   AIR = 0,
@@ -30,6 +30,10 @@ export enum BlockType {
   OBSIDIAN = 22,
   IRON_ORE = 23,
   COAL_ORE = 24,
+  SNOW = 25,
+  CACTUS = 26,
+  ICE = 27,
+  SNOW_LEAVES = 28,
 }
 
 export enum ItemType {
@@ -91,11 +95,17 @@ export const BLOCK_DEFS: Record<BlockType, BlockDefinition> = {
   [BlockType.OBSIDIAN]: { id: BlockType.OBSIDIAN, name: 'Obsidian', nameRu: 'Обсидиан', color: '#1a1024', solid: true, transparent: false, soundType: 'stone' },
   [BlockType.IRON_ORE]: { id: BlockType.IRON_ORE, name: 'Iron Ore', nameRu: 'Железная руда', color: '#d8af93', solid: true, transparent: false, soundType: 'stone' },
   [BlockType.COAL_ORE]: { id: BlockType.COAL_ORE, name: 'Coal Ore', nameRu: 'Угольная руда', color: '#333333', solid: true, transparent: false, soundType: 'stone' },
+  [BlockType.SNOW]: { id: BlockType.SNOW, name: 'Snow', nameRu: 'Снег', color: '#f0f4f8', solid: true, transparent: false, soundType: 'grass' },
+  [BlockType.CACTUS]: { id: BlockType.CACTUS, name: 'Cactus', nameRu: 'Кактус', color: '#2d7a32', solid: true, transparent: false, soundType: 'grass' },
+  [BlockType.ICE]: { id: BlockType.ICE, name: 'Ice', nameRu: 'Лёд', color: '#90d5ec', solid: true, transparent: true, soundType: 'glass' },
+  [BlockType.SNOW_LEAVES]: { id: BlockType.SNOW_LEAVES, name: 'Snowy Leaves', nameRu: 'Заснеженная хвоя', color: '#dbeafe', solid: true, transparent: true, soundType: 'grass' },
 };
 
 export const SELECTABLE_BLOCKS: BlockType[] = [
   BlockType.GRASS,
   BlockType.DIRT,
+  BlockType.SNOW,
+  BlockType.SAND,
   BlockType.STONE,
   BlockType.COBBLESTONE,
   BlockType.WOOD,
@@ -103,6 +113,9 @@ export const SELECTABLE_BLOCKS: BlockType[] = [
   BlockType.CRAFTING_TABLE,
   BlockType.CHEST,
   BlockType.LEAVES,
+  BlockType.SNOW_LEAVES,
+  BlockType.CACTUS,
+  BlockType.ICE,
   BlockType.BRICK,
   BlockType.GLASS,
   BlockType.GLOWSTONE,
@@ -112,7 +125,6 @@ export const SELECTABLE_BLOCKS: BlockType[] = [
   BlockType.OBSIDIAN,
   BlockType.BOOKSHELF,
   BlockType.TNT,
-  BlockType.SAND,
   BlockType.FLOWER,
 ];
 

@@ -34,23 +34,51 @@ export class ChunkMesh {
     const opaqueNormals: number[] = [];
     const opaqueUvs: number[] = [];
     const opaqueIndices: number[] = [];
-    const opaqueGroups: { start: number; count: number; materialIndex: number }[] = [];
 
     const transparentPositions: number[] = [];
     const transparentNormals: number[] = [];
     const transparentUvs: number[] = [];
     const transparentIndices: number[] = [];
-    const transparentGroups: { start: number; count: number; materialIndex: number }[] = [];
 
     // Face definitions
     // 0: +X (Right), 1: -X (Left), 2: +Y (Top), 3: -Y (Bottom), 4: +Z (Front), 5: -Z (Back)
     const faces = [
-      { dir: [1, 0, 0], norm: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], matIdx: 0 },
-      { dir: [-1, 0, 0], norm: [-1, 0, 0], corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]], matIdx: 1 },
-      { dir: [0, 1, 0], norm: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], matIdx: 2 },
-      { dir: [0, -1, 0], norm: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], matIdx: 3 },
-      { dir: [0, 0, 1], norm: [0, 0, 1], corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]], matIdx: 4 },
-      { dir: [0, 0, -1], norm: [0, 0, -1], corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]], matIdx: 5 },
+      {
+        dir: [1, 0, 0], norm: [1, 0, 0],
+        corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]],
+        matIdx: 0,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u0, v0, u0, v1, u1, v1, u1, v0]
+      },
+      {
+        dir: [-1, 0, 0], norm: [-1, 0, 0],
+        corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]],
+        matIdx: 1,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u0, v0, u0, v1, u1, v1, u1, v0]
+      },
+      {
+        dir: [0, 1, 0], norm: [0, 1, 0],
+        corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]],
+        matIdx: 2,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u0, v1, u1, v1, u1, v0, u0, v0]
+      },
+      {
+        dir: [0, -1, 0], norm: [0, -1, 0],
+        corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+        matIdx: 3,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u0, v0, u1, v0, u1, v1, u0, v1]
+      },
+      {
+        dir: [0, 0, 1], norm: [0, 0, 1],
+        corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]],
+        matIdx: 4,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u1, v0, u1, v1, u0, v1, u0, v0]
+      },
+      {
+        dir: [0, 0, -1], norm: [0, 0, -1],
+        corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]],
+        matIdx: 5,
+        getUVs: (u0: number, u1: number, v0: number, v1: number) => [u0, v0, u0, v1, u1, v1, u1, v0]
+      },
     ];
 
     let opaqueVertCount = 0;
@@ -72,11 +100,10 @@ export class ChunkMesh {
 
           // Special cross-quad for flowers
           if (blockType === BlockType.FLOWER) {
-            const matIndex = texManager.getMaterialIndex(BlockType.FLOWER, 0);
-            const indexStart = transparentIndices.length;
-
+            const uvsRect = texManager.getTileUVs(BlockType.FLOWER, 0);
             this.addFlowerCrossQuad(
               gx, gy, gz,
+              uvsRect,
               transparentPositions,
               transparentNormals,
               transparentUvs,
@@ -84,7 +111,6 @@ export class ChunkMesh {
               transparentVertCount
             );
             transparentVertCount += 8;
-            transparentGroups.push({ start: indexStart, count: 12, materialIndex: matIndex });
             continue;
           }
 
@@ -114,27 +140,24 @@ export class ChunkMesh {
             const normals = isTrans ? transparentNormals : opaqueNormals;
             const uvs = isTrans ? transparentUvs : opaqueUvs;
             const indices = isTrans ? transparentIndices : opaqueIndices;
-            const groups = isTrans ? transparentGroups : opaqueGroups;
             const vertOffset = isTrans ? transparentVertCount : opaqueVertCount;
 
-            const matIndex = texManager.getMaterialIndex(blockType, face.matIdx);
-            const indexStart = indices.length;
+            const { u0, u1, v0, v1 } = texManager.getTileUVs(blockType, face.matIdx);
 
             // Add 4 corners
             for (const c of face.corners) {
               positions.push(gx + c[0], gy + c[1], gz + c[2]);
               normals.push(...face.norm);
             }
+
             // UVs
-            uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
+            uvs.push(...face.getUVs(u0, u1, v0, v1));
 
             // 2 Triangles
             indices.push(
               vertOffset, vertOffset + 1, vertOffset + 2,
               vertOffset, vertOffset + 2, vertOffset + 3
             );
-
-            groups.push({ start: indexStart, count: 6, materialIndex: matIndex });
 
             if (isTrans) {
               transparentVertCount += 4;
@@ -146,39 +169,31 @@ export class ChunkMesh {
       }
     }
 
-    // Create opaque mesh
+    // Create single opaque mesh for chunk (1 draw call)
     if (opaquePositions.length > 0) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(opaquePositions, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(opaqueNormals, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(opaqueUvs, 2));
       geo.setIndex(opaqueIndices);
-
-      for (const group of opaqueGroups) {
-        geo.addGroup(group.start, group.count, group.materialIndex);
-      }
       geo.computeBoundingSphere();
 
-      this.opaqueMesh = new THREE.Mesh(geo, texManager.masterMaterials);
+      this.opaqueMesh = new THREE.Mesh(geo, texManager.masterOpaqueMaterial);
       this.opaqueMesh.castShadow = true;
       this.opaqueMesh.receiveShadow = true;
       this.mesh.add(this.opaqueMesh);
     }
 
-    // Create transparent mesh
+    // Create single transparent mesh for chunk (1 draw call)
     if (transparentPositions.length > 0) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(transparentPositions, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(transparentNormals, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(transparentUvs, 2));
       geo.setIndex(transparentIndices);
-
-      for (const group of transparentGroups) {
-        geo.addGroup(group.start, group.count, group.materialIndex);
-      }
       geo.computeBoundingSphere();
 
-      this.transparentMesh = new THREE.Mesh(geo, texManager.masterMaterials);
+      this.transparentMesh = new THREE.Mesh(geo, texManager.masterTransparentMaterial);
       this.transparentMesh.renderOrder = 1;
       this.mesh.add(this.transparentMesh);
     }
@@ -186,8 +201,11 @@ export class ChunkMesh {
 
   private addFlowerCrossQuad(
     gx: number, gy: number, gz: number,
+    uvsRect: { u0: number; u1: number; v0: number; v1: number },
     positions: number[], normals: number[], uvs: number[], indices: number[], vertOffset: number
   ) {
+    const { u0, u1, v0, v1 } = uvsRect;
+
     positions.push(
       gx, gy, gz,
       gx, gy + 1, gz,
@@ -195,7 +213,7 @@ export class ChunkMesh {
       gx + 1, gy, gz + 1
     );
     normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
-    uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
+    uvs.push(u0, v0, u0, v1, u1, v1, u1, v0);
     indices.push(
       vertOffset, vertOffset + 1, vertOffset + 2,
       vertOffset, vertOffset + 2, vertOffset + 3
@@ -209,7 +227,7 @@ export class ChunkMesh {
       gx, gy, gz + 1
     );
     normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
-    uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
+    uvs.push(u0, v0, u0, v1, u1, v1, u1, v0);
     indices.push(
       o2, o2 + 1, o2 + 2,
       o2, o2 + 2, o2 + 3

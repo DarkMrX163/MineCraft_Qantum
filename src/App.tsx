@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import { BlockType, BLOCK_DEFS } from './game/constants';
+import { BlockType } from './game/constants';
 import { VoxelWorld } from './game/world/VoxelWorld';
 import { PlayerPhysics } from './game/physics/PlayerPhysics';
 import { FirstPersonHand } from './game/entities/FirstPersonHand';
@@ -24,6 +23,38 @@ import { EventBanner } from './components/EventBanner';
 import { Minimap } from './components/Minimap';
 import { PlayerStatsBar } from './components/PlayerStatsBar';
 
+function isBlockIntersectingPlayer(
+  blockX: number,
+  blockY: number,
+  blockZ: number,
+  playerPos: THREE.Vector3,
+  playerWidth = 0.6,
+  playerHeight = 1.8
+): boolean {
+  const pMinX = playerPos.x - playerWidth / 2;
+  const pMaxX = playerPos.x + playerWidth / 2;
+  const pMinY = playerPos.y;
+  const pMaxY = playerPos.y + playerHeight;
+  const pMinZ = playerPos.z - playerWidth / 2;
+  const pMaxZ = playerPos.z + playerWidth / 2;
+
+  const bMinX = Math.floor(blockX);
+  const bMaxX = bMinX + 1;
+  const bMinY = Math.floor(blockY);
+  const bMaxY = bMinY + 1;
+  const bMinZ = Math.floor(blockZ);
+  const bMaxZ = bMinZ + 1;
+
+  return (
+    pMinX < bMaxX &&
+    pMaxX > bMinX &&
+    pMinY < bMaxY &&
+    pMaxY > bMinY &&
+    pMinZ < bMaxZ &&
+    pMaxZ > bMinZ
+  );
+}
+
 export default function App() {
   const [gameState, setGameState] = useState<'TITLE' | 'PLAYING'>('TITLE');
   const [playerName, setPlayerName] = useState('Стив');
@@ -32,6 +63,8 @@ export default function App() {
   const [isSinglePlayer, setIsSinglePlayer] = useState(false);
 
   const [selectedBlock, setSelectedBlock] = useState<BlockType>(BlockType.GRASS);
+  const selectedBlockRef = useRef<BlockType>(BlockType.GRASS);
+
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [craftingGridSize, setCraftingGridSize] = useState<2 | 3 | null>(null);
   const [isFlying, setIsFlying] = useState(false);
@@ -56,6 +89,7 @@ export default function App() {
   const canvasMountRef = useRef<HTMLDivElement>(null);
 
   // Engine refs
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const worldRef = useRef<VoxelWorld | null>(null);
   const physicsRef = useRef<PlayerPhysics | null>(null);
   const handRef = useRef<FirstPersonHand | null>(null);
@@ -70,6 +104,14 @@ export default function App() {
   const moveInputRef = useRef({ x: 0, z: 0 });
   const isPointerLockedRef = useRef(false);
   const keysPressedRef = useRef<Record<string, boolean>>({});
+
+  const changeSelectedBlock = (b: BlockType) => {
+    setSelectedBlock(b);
+    selectedBlockRef.current = b;
+    if (handRef.current) {
+      handRef.current.setHeldBlock(b);
+    }
+  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -97,11 +139,8 @@ export default function App() {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     mount.appendChild(renderer.domElement);
 
@@ -110,17 +149,11 @@ export default function App() {
     scene.background = initialSky;
     scene.fog = new THREE.FogExp2(0x87ceeb, 0.012);
 
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmremGenerator.dispose();
-
     const camera = new THREE.PerspectiveCamera(70, width / height, 0.1, 250);
+    cameraRef.current = camera;
 
-    const sunLight = new THREE.DirectionalLight(0xfffaed, 1.4);
+    const sunLight = new THREE.DirectionalLight(0xfffaed, 1.2);
     sunLight.position.set(50, 100, 30);
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
     scene.add(sunLight);
 
     const sunGeo = new THREE.BoxGeometry(10, 10, 10);
@@ -151,6 +184,7 @@ export default function App() {
 
     const hand = new FirstPersonHand();
     handRef.current = hand;
+    hand.setHeldBlock(selectedBlockRef.current);
     camera.add(hand.group);
     scene.add(camera);
 
@@ -164,7 +198,7 @@ export default function App() {
       const net = new MultiplayerClient();
       networkRef.current = net;
 
-      net.onInit(({ playerId, players, blockChanges }) => {
+      net.onInit(({ players, blockChanges }) => {
         voxelWorld.applyServerBlockChanges(blockChanges);
         setPlayerCount(players.length + 1);
 
@@ -245,7 +279,7 @@ export default function App() {
 
     const handleMouseMove = (e: MouseEvent) => {
       if (isPointerLockedRef.current) {
-        const sensitivity = 0.0025;
+        const sensitivity = 0.0022;
         cameraYawRef.current -= e.movementX * sensitivity;
         cameraPitchRef.current -= e.movementY * sensitivity;
         cameraPitchRef.current = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, cameraPitchRef.current));
@@ -263,8 +297,7 @@ export default function App() {
             BlockType.GRASS, BlockType.DIRT, BlockType.STONE, BlockType.COBBLESTONE,
             BlockType.WOOD, BlockType.PLANKS, BlockType.CRAFTING_TABLE, BlockType.CHEST
           ][digit - 1];
-          setSelectedBlock(block);
-          hand.setHeldBlock(block);
+          changeSelectedBlock(block);
         }
       }
 
@@ -283,17 +316,21 @@ export default function App() {
     const handleMouseDown = (e: MouseEvent) => {
       if (!isPointerLockedRef.current || !worldRef.current) return;
 
-      const hit = worldRef.current.raycast(camera.position, camera.getWorldDirection(new THREE.Vector3()), 6.0);
-
-      if (eventManagerRef.current && hit && eventManagerRef.current.attackMobAt(hit.hitPoint)) {
-        hand.triggerSwing();
-        return;
-      }
-
-      if (!hit) return;
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
 
       if (e.button === 0) {
         hand.triggerSwing();
+
+        // 1. Attack Mob with 3D raycast
+        if (eventManagerRef.current && eventManagerRef.current.attackMobWithRay(camera.position, camDir, 5.5)) {
+          return;
+        }
+
+        // 2. Break block if no mob was hit
+        const hit = worldRef.current.raycast(camera.position, camDir, 6.0);
+        if (!hit) return;
+
         const oldBlock = voxelWorld.getBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z);
         voxelWorld.setBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z, BlockType.AIR);
 
@@ -305,6 +342,9 @@ export default function App() {
       } else if (e.button === 2) {
         hand.triggerSwing();
 
+        const hit = worldRef.current.raycast(camera.position, camDir, 6.0);
+        if (!hit) return;
+
         if (hit.blockType === BlockType.CRAFTING_TABLE) {
           setCraftingGridSize(3);
           document.exitPointerLock();
@@ -312,8 +352,15 @@ export default function App() {
         }
 
         const placePos = hit.blockPos.clone().add(hit.faceNormal);
-        voxelWorld.setBlock(placePos.x, placePos.y, placePos.z, selectedBlock);
-        if (networkRef.current) networkRef.current.sendBlockUpdate(placePos.x, placePos.y, placePos.z, selectedBlock);
+
+        // Prevent placing block inside player's body (standing on it) unless in mid-air jump
+        if (isBlockIntersectingPlayer(placePos.x, placePos.y, placePos.z, playerPhysics.position)) {
+          return;
+        }
+
+        const blockToPlace = selectedBlockRef.current;
+        voxelWorld.setBlock(placePos.x, placePos.y, placePos.z, blockToPlace);
+        if (networkRef.current) networkRef.current.sendBlockUpdate(placePos.x, placePos.y, placePos.z, blockToPlace);
       }
     };
     window.addEventListener('mousedown', handleMouseDown);
@@ -342,18 +389,25 @@ export default function App() {
       const isPlayerMoving = moveInputRef.current.x !== 0 || moveInputRef.current.z !== 0;
 
       statsRef.current.update(dt, playerY, playerPhysics.isGrounded, isPlayerMoving);
-      setHealth(statsRef.current.health);
-      setHunger(statsRef.current.hunger);
-      setArmorPoints(statsRef.current.getTotalArmorPoints());
-      setIsDead(statsRef.current.isDead);
-      setDamageFlash(statsRef.current.damageFlashTimer > 0);
+
+      const roundedHealth = Math.round(statsRef.current.health * 2) / 2;
+      const roundedHunger = Math.round(statsRef.current.hunger * 2) / 2;
+      const totalArmor = statsRef.current.getTotalArmorPoints();
+      const deadState = statsRef.current.isDead;
+      const flashState = statsRef.current.damageFlashTimer > 0;
+
+      if (roundedHealth !== health) setHealth(roundedHealth);
+      if (roundedHunger !== hunger) setHunger(roundedHunger);
+      if (totalArmor !== armorPoints) setArmorPoints(totalArmor);
+      if (deadState !== isDead) setIsDead(deadState);
+      if (flashState !== damageFlash) setDamageFlash(flashState);
 
       mobAttackTimer += dt;
-      if (mobAttackTimer > 1.0) {
+      if (mobAttackTimer > 1.5) {
         mobAttackTimer = 0;
         eventManager.mobs.forEach((mob) => {
-          if (mob.position.distanceTo(playerPhysics.position) < 1.8) {
-            statsRef.current.takeDamage(4);
+          if (mob.position.distanceTo(playerPhysics.position) < 1.4) {
+            statsRef.current.takeDamage(1.5);
           }
         });
       }
@@ -419,10 +473,17 @@ export default function App() {
       voxelWorld.updateChunksAroundPlayer(playerX, playerZ);
 
       minimapSyncTimer += dt;
-      if (minimapSyncTimer > 0.1) {
+      if (minimapSyncTimer > 0.2) {
         minimapSyncTimer = 0;
-        setMinimapPos({ x: playerX, y: playerY, z: playerZ });
-        setMinimapYaw(cameraYawRef.current);
+        const ipx = Math.floor(playerX);
+        const ipy = Math.floor(playerY);
+        const ipz = Math.floor(playerZ);
+        if (ipx !== Math.floor(minimapPos.x) || ipy !== Math.floor(minimapPos.y) || ipz !== Math.floor(minimapPos.z)) {
+          setMinimapPos({ x: playerX, y: playerY, z: playerZ });
+        }
+        if (Math.abs(cameraYawRef.current - minimapYaw) > 0.05) {
+          setMinimapYaw(cameraYawRef.current);
+        }
       }
 
       if (isSinglePlayer) {
@@ -488,7 +549,7 @@ export default function App() {
             playerZ,
             cameraYawRef.current,
             cameraPitchRef.current,
-            selectedBlock,
+            selectedBlockRef.current,
             isPlayerMoving,
             !playerPhysics.isGrounded
           );
@@ -530,12 +591,20 @@ export default function App() {
   }, [gameState, roomId, isSinglePlayer]);
 
   const handleMobileMine = () => {
-    if (!worldRef.current || !physicsRef.current) return;
-    const cameraDir = new THREE.Vector3(-Math.sin(cameraYawRef.current), Math.sin(cameraPitchRef.current), -Math.cos(cameraYawRef.current));
-    const hit = worldRef.current.raycast(physicsRef.current.position, cameraDir, 6.0);
-    if (hit) {
-      if (handRef.current) handRef.current.triggerSwing();
+    if (!worldRef.current || !cameraRef.current) return;
+    const dir = new THREE.Vector3();
+    cameraRef.current.getWorldDirection(dir);
 
+    if (handRef.current) handRef.current.triggerSwing();
+
+    // 1. Attack mob on mobile
+    if (eventManagerRef.current && eventManagerRef.current.attackMobWithRay(cameraRef.current.position, dir, 5.5)) {
+      return;
+    }
+
+    // 2. Otherwise mine block
+    const hit = worldRef.current.raycast(cameraRef.current.position, dir, 6.0);
+    if (hit) {
       const oldBlock = worldRef.current.getBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z);
       worldRef.current.setBlock(hit.blockPos.x, hit.blockPos.y, hit.blockPos.z, BlockType.AIR);
 
@@ -548,9 +617,10 @@ export default function App() {
   };
 
   const handleMobilePlace = () => {
-    if (!worldRef.current || !physicsRef.current) return;
-    const cameraDir = new THREE.Vector3(-Math.sin(cameraYawRef.current), Math.sin(cameraPitchRef.current), -Math.cos(cameraYawRef.current));
-    const hit = worldRef.current.raycast(physicsRef.current.position, cameraDir, 6.0);
+    if (!worldRef.current || !cameraRef.current) return;
+    const dir = new THREE.Vector3();
+    cameraRef.current.getWorldDirection(dir);
+    const hit = worldRef.current.raycast(cameraRef.current.position, dir, 6.0);
     if (hit) {
       if (handRef.current) handRef.current.triggerSwing();
 
@@ -560,8 +630,14 @@ export default function App() {
       }
 
       const placePos = hit.blockPos.clone().add(hit.faceNormal);
-      worldRef.current.setBlock(placePos.x, placePos.y, placePos.z, selectedBlock);
-      if (networkRef.current) networkRef.current.sendBlockUpdate(placePos.x, placePos.y, placePos.z, selectedBlock);
+
+      if (physicsRef.current && isBlockIntersectingPlayer(placePos.x, placePos.y, placePos.z, physicsRef.current.position)) {
+        return;
+      }
+
+      const blockToPlace = selectedBlockRef.current;
+      worldRef.current.setBlock(placePos.x, placePos.y, placePos.z, blockToPlace);
+      if (networkRef.current) networkRef.current.sendBlockUpdate(placePos.x, placePos.y, placePos.z, blockToPlace);
     }
   };
 
@@ -629,10 +705,7 @@ export default function App() {
       {/* Hotbar */}
       <Hotbar
         selectedBlock={selectedBlock}
-        onSelectBlock={(b) => {
-          setSelectedBlock(b);
-          if (handRef.current) handRef.current.setHeldBlock(b);
-        }}
+        onSelectBlock={changeSelectedBlock}
         isInventoryOpen={isInventoryOpen}
         setIsInventoryOpen={setIsInventoryOpen}
       />
@@ -649,8 +722,7 @@ export default function App() {
           onClose={() => setCraftingGridSize(null)}
           onCraftItem={(itemId) => {
             if (itemId <= 24) {
-              setSelectedBlock(itemId as BlockType);
-              if (handRef.current) handRef.current.setHeldBlock(itemId as BlockType);
+              changeSelectedBlock(itemId as BlockType);
             }
             SoundEffects.getInstance().playPopSound();
           }}

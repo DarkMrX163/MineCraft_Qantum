@@ -30,24 +30,20 @@ export class Avatar {
 
     // Head Group
     const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    // Multi-materials for head face
     const eyeCanvas = document.createElement('canvas');
     eyeCanvas.width = 16;
     eyeCanvas.height = 16;
     const ctx = eyeCanvas.getContext('2d')!;
     ctx.fillStyle = '#fcc89b';
     ctx.fillRect(0, 0, 16, 16);
-    // Hair top
     ctx.fillStyle = '#4a2e12';
     ctx.fillRect(0, 0, 16, 5);
-    // Eyes
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(3, 7, 3, 2);
     ctx.fillRect(10, 7, 3, 2);
     ctx.fillStyle = '#1b3b82';
     ctx.fillRect(4, 7, 2, 2);
     ctx.fillRect(11, 7, 2, 2);
-    // Mouth
     ctx.fillStyle = '#a65444';
     ctx.fillRect(6, 11, 4, 1);
 
@@ -85,8 +81,10 @@ export class Avatar {
 
     // Held Voxel Block in Right Hand
     const miniBlockGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-    const sampleMats = TextureManager.getInstance().getBlockMaterials(BlockType.GRASS);
-    this.heldItemMesh = new THREE.Mesh(miniBlockGeo, sampleMats);
+    this.applyBlockUVs(miniBlockGeo, BlockType.GRASS);
+
+    const texManager = TextureManager.getInstance();
+    this.heldItemMesh = new THREE.Mesh(miniBlockGeo, texManager.masterOpaqueMaterial);
     this.heldItemMesh.position.set(0, -0.6, 0.15);
     this.rightArmMesh.add(this.heldItemMesh);
 
@@ -113,6 +111,24 @@ export class Avatar {
     this.nameTagSprite = this.createNameTagSprite(name, colorHex);
     this.nameTagSprite.position.set(0, 1.95, 0);
     this.mesh.add(this.nameTagSprite);
+  }
+
+  private applyBlockUVs(geometry: THREE.BufferGeometry, blockType: BlockType) {
+    const texManager = TextureManager.getInstance();
+    const uvs: number[] = [];
+    for (let faceIdx = 0; faceIdx < 6; faceIdx++) {
+      const { u0, u1, v0, v1 } = texManager.getTileUVs(blockType, faceIdx);
+      uvs.push(
+        u0, v1,
+        u1, v1,
+        u0, v0,
+        u1, v0
+      );
+    }
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    if (geometry.attributes.uv) {
+      geometry.attributes.uv.needsUpdate = true;
+    }
   }
 
   private createNameTagSprite(text: string, colorHex: string): THREE.Sprite {
@@ -143,8 +159,10 @@ export class Avatar {
   }
 
   public updateHeldBlock(blockType: BlockType) {
-    const mats = TextureManager.getInstance().getBlockMaterials(blockType);
-    this.heldItemMesh.material = mats;
+    const texManager = TextureManager.getInstance();
+    const isTrans = blockType === BlockType.LEAVES || blockType === BlockType.GLASS || blockType === BlockType.FLOWER || blockType === BlockType.WATER;
+    this.heldItemMesh.material = isTrans ? texManager.masterTransparentMaterial : texManager.masterOpaqueMaterial;
+    this.applyBlockUVs(this.heldItemMesh.geometry as THREE.BufferGeometry, blockType);
   }
 
   public update(dt: number) {

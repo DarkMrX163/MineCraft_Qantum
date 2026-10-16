@@ -1,12 +1,24 @@
 import * as THREE from 'three';
 import { BlockType, ItemType } from '../constants';
 
+export interface UVRect {
+  u0: number;
+  u1: number;
+  v0: number;
+  v1: number;
+}
+
 export class TextureManager {
   private static instance: TextureManager;
+
+  public masterAtlasCanvas: HTMLCanvasElement;
+  public atlasTexture: THREE.CanvasTexture;
+  public masterOpaqueMaterial: THREE.MeshLambertMaterial;
+  public masterTransparentMaterial: THREE.MeshLambertMaterial;
+
+  // Map from texture name to grid col (0..7) and row (0..7)
+  private tileMap = new Map<string, { col: number; row: number }>();
   private canvasMap = new Map<string, HTMLCanvasElement>();
-  private textureMap = new Map<string, THREE.CanvasTexture>();
-  public masterMaterials: THREE.Material[] = [];
-  private materialIndexMap = new Map<string, number>();
 
   public static getInstance(): TextureManager {
     if (!TextureManager.instance) {
@@ -16,206 +28,648 @@ export class TextureManager {
   }
 
   constructor() {
-    this.generateAllTextures();
-    this.buildMasterMaterials();
-  }
-
-  private createPixelCanvas(drawFn: (ctx: CanvasRenderingContext2D) => void, size = 16): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    this.masterAtlasCanvas = document.createElement('canvas');
+    this.masterAtlasCanvas.width = 128; // 8 tiles x 16px
+    this.masterAtlasCanvas.height = 128; // 8 tiles x 16px
+    const ctx = this.masterAtlasCanvas.getContext('2d', { willReadFrequently: true })!;
     ctx.imageSmoothingEnabled = false;
-    drawFn(ctx);
-    return canvas;
-  }
 
-  private getOrCreateTexture(name: string, drawFn: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
-    let texture = this.textureMap.get(name);
-    if (!texture) {
-      const canvas = this.createPixelCanvas(drawFn);
-      this.canvasMap.set(name, canvas);
-      texture = new THREE.CanvasTexture(canvas);
-      texture.magFilter = THREE.NearestFilter;
-      texture.minFilter = THREE.NearestFilter;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      this.textureMap.set(name, texture);
-    }
-    return texture;
-  }
+    this.registerTilePositions();
+    this.drawAllTilesToAtlas(ctx);
 
-  private registerMaterial(name: string, transparent = false, opacity = 1.0, emissive = false): number {
-    if (this.materialIndexMap.has(name)) {
-      return this.materialIndexMap.get(name)!;
-    }
-    const tex = this.getTexture(name);
-    const mat = new THREE.MeshLambertMaterial({
-      map: tex,
-      transparent,
-      opacity,
-      emissive: emissive ? new THREE.Color(0xffe066) : new THREE.Color(0x000000),
-      emissiveIntensity: emissive ? 0.6 : 0,
-      alphaTest: transparent && opacity === 1.0 ? 0.5 : 0,
-      side: transparent ? THREE.DoubleSide : THREE.FrontSide,
+    this.atlasTexture = new THREE.CanvasTexture(this.masterAtlasCanvas);
+    this.atlasTexture.magFilter = THREE.NearestFilter;
+    this.atlasTexture.minFilter = THREE.NearestFilter;
+    this.atlasTexture.colorSpace = THREE.SRGBColorSpace;
+    this.atlasTexture.needsUpdate = true;
+
+    this.masterOpaqueMaterial = new THREE.MeshLambertMaterial({
+      map: this.atlasTexture,
+      side: THREE.FrontSide,
     });
-    const idx = this.masterMaterials.length;
-    this.masterMaterials.push(mat);
-    this.materialIndexMap.set(name, idx);
-    return idx;
+
+    this.masterTransparentMaterial = new THREE.MeshLambertMaterial({
+      map: this.atlasTexture,
+      transparent: true,
+      alphaTest: 0.2,
+      side: THREE.DoubleSide,
+    });
   }
 
-  private buildMasterMaterials() {
-    this.registerMaterial('grass_top');
-    this.registerMaterial('grass_side');
-    this.registerMaterial('dirt');
-    this.registerMaterial('stone');
-    this.registerMaterial('cobblestone');
-    this.registerMaterial('wood_side');
-    this.registerMaterial('wood_top');
-    this.registerMaterial('planks');
-    this.registerMaterial('leaves', true, 1.0);
-    this.registerMaterial('sand');
-    this.registerMaterial('brick');
-    this.registerMaterial('glass', true, 0.65);
-    this.registerMaterial('glowstone', false, 1.0, true);
-    this.registerMaterial('diamond_ore');
-    this.registerMaterial('gold_ore');
-    this.registerMaterial('iron_ore');
-    this.registerMaterial('coal_ore');
-    this.registerMaterial('bedrock');
-    this.registerMaterial('bookshelf');
-    this.registerMaterial('tnt_side');
-    this.registerMaterial('tnt_top');
-    this.registerMaterial('water', true, 0.7);
-    this.registerMaterial('flower', true, 1.0);
-    this.registerMaterial('crafting_table_top');
-    this.registerMaterial('crafting_table_side');
-    this.registerMaterial('chest_front');
-    this.registerMaterial('chest_side');
-    this.registerMaterial('furnace_front');
-    this.registerMaterial('obsidian');
+  private registerTilePositions() {
+    const tiles: { [name: string]: [number, number] } = {
+      grass_top: [0, 0],
+      grass_side: [1, 0],
+      dirt: [2, 0],
+      stone: [3, 0],
+      cobblestone: [4, 0],
+      wood_side: [5, 0],
+      wood_top: [6, 0],
+      planks: [7, 0],
+
+      leaves: [0, 1],
+      sand: [1, 1],
+      brick: [2, 1],
+      glass: [3, 1],
+      glowstone: [4, 1],
+      diamond_ore: [5, 1],
+      gold_ore: [6, 1],
+      iron_ore: [7, 1],
+
+      coal_ore: [0, 2],
+      bedrock: [1, 2],
+      bookshelf: [2, 2],
+      tnt_side: [3, 2],
+      tnt_top: [4, 2],
+      water: [5, 2],
+      flower: [6, 2],
+      crafting_table_top: [7, 2],
+
+      crafting_table_side: [0, 3],
+      chest_front: [1, 3],
+      chest_side: [2, 3],
+      furnace_front: [3, 3],
+      obsidian: [4, 3],
+      item_stick: [5, 3],
+      item_pickaxe: [6, 3],
+      item_sword: [7, 3],
+
+      item_helmet: [0, 4],
+      item_chestplate: [1, 4],
+      item_leggings: [2, 4],
+
+      snow: [3, 4],
+      cactus_top: [4, 4],
+      cactus_side: [5, 4],
+      ice: [6, 4],
+      snow_leaves: [7, 4],
+    };
+
+    for (const [name, [col, row]] of Object.entries(tiles)) {
+      this.tileMap.set(name, { col, row });
+    }
   }
 
-  public getMaterialIndex(blockType: BlockType, faceIndex: number): number {
+  private drawTile(
+    ctx: CanvasRenderingContext2D,
+    name: string,
+    drawFn: (tctx: CanvasRenderingContext2D) => void
+  ) {
+    const pos = this.tileMap.get(name);
+    if (!pos) return;
+
+    const tileCanvas = document.createElement('canvas');
+    tileCanvas.width = 16;
+    tileCanvas.height = 16;
+    const tctx = tileCanvas.getContext('2d', { willReadFrequently: true })!;
+    tctx.imageSmoothingEnabled = false;
+    drawFn(tctx);
+
+    ctx.drawImage(tileCanvas, pos.col * 16, pos.row * 16);
+    this.canvasMap.set(name, tileCanvas);
+  }
+
+  private drawAllTilesToAtlas(ctx: CanvasRenderingContext2D) {
+    // Dirt
+    this.drawTile(ctx, 'dirt', (tctx) => {
+      tctx.fillStyle = '#866043';
+      tctx.fillRect(0, 0, 16, 16);
+      const dirtColors = ['#734f35', '#986d4e', '#61412b', '#7e5a3e'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 7 + y * 13) % 4 === 0) {
+            tctx.fillStyle = dirtColors[(x + y) % dirtColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Grass Top
+    this.drawTile(ctx, 'grass_top', (tctx) => {
+      tctx.fillStyle = '#55a137';
+      tctx.fillRect(0, 0, 16, 16);
+      const shades = ['#498e2e', '#67b842', '#3e7a27', '#509633'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 11 + y * 17) % 3 === 0) {
+            tctx.fillStyle = shades[(x * 3 + y * 7) % shades.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Grass Side
+    this.drawTile(ctx, 'grass_side', (tctx) => {
+      tctx.fillStyle = '#866043';
+      tctx.fillRect(0, 0, 16, 16);
+      const dirtColors = ['#734f35', '#986d4e', '#61412b'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 3; y < 16; y++) {
+          if ((x * 7 + y * 13) % 4 === 0) {
+            tctx.fillStyle = dirtColors[(x + y) % dirtColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+      tctx.fillStyle = '#55a137';
+      tctx.fillRect(0, 0, 16, 3);
+      const overhang = [3, 4, 3, 5, 4, 3, 5, 4, 3, 4, 5, 3, 4, 3, 4, 3];
+      for (let x = 0; x < 16; x++) {
+        const h = overhang[x % overhang.length];
+        tctx.fillStyle = x % 2 === 0 ? '#498e2e' : '#67b842';
+        tctx.fillRect(x, 3, 1, h - 2);
+      }
+    });
+
+    // Stone
+    this.drawTile(ctx, 'stone', (tctx) => {
+      tctx.fillStyle = '#7a7a7a';
+      tctx.fillRect(0, 0, 16, 16);
+      const stoneColors = ['#686868', '#8a8a8a', '#5f5f5f', '#919191'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 5 + y * 9) % 3 === 0) {
+            tctx.fillStyle = stoneColors[(x * 2 + y * 5) % stoneColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Cobblestone
+    this.drawTile(ctx, 'cobblestone', (tctx) => {
+      tctx.fillStyle = '#656565';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#444444';
+      for (let i = 0; i < 16; i += 4) {
+        tctx.fillRect(0, i, 16, 1);
+      }
+      const pebbles = ['#7c7c7c', '#8a8a8a', '#585858'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x + y) % 3 === 0) {
+            tctx.fillStyle = pebbles[(x + y * 3) % pebbles.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Wood Side
+    this.drawTile(ctx, 'wood_side', (tctx) => {
+      tctx.fillStyle = '#5c462b';
+      tctx.fillRect(0, 0, 16, 16);
+      const barkColors = ['#46341e', '#6e5436', '#382815'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if (x % 3 === 0 || (x + y * 2) % 5 === 0) {
+            tctx.fillStyle = barkColors[(x + y) % barkColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Wood Top
+    this.drawTile(ctx, 'wood_top', (tctx) => {
+      tctx.fillStyle = '#5c462b';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#9c7a4c';
+      tctx.fillRect(2, 2, 12, 12);
+      tctx.fillStyle = '#82633a';
+      tctx.fillRect(4, 4, 8, 8);
+      tctx.fillStyle = '#9c7a4c';
+      tctx.fillRect(6, 6, 4, 4);
+      tctx.fillStyle = '#6b4f2c';
+      tctx.fillRect(7, 7, 2, 2);
+    });
+
+    // Planks
+    this.drawTile(ctx, 'planks', (tctx) => {
+      tctx.fillStyle = '#a17e4f';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#6e522d';
+      tctx.fillRect(0, 3, 16, 1);
+      tctx.fillRect(0, 7, 16, 1);
+      tctx.fillRect(0, 11, 16, 1);
+      tctx.fillRect(0, 15, 16, 1);
+      tctx.fillRect(7, 0, 1, 3);
+      tctx.fillRect(12, 4, 1, 3);
+      tctx.fillRect(4, 8, 1, 3);
+      tctx.fillRect(10, 12, 1, 3);
+    });
+
+    // Leaves
+    this.drawTile(ctx, 'leaves', (tctx) => {
+      tctx.fillStyle = '#3a7d23';
+      tctx.fillRect(0, 0, 16, 16);
+      const leafGreens = ['#46912c', '#2c611a', '#54a337', '#224a14'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 3 + y * 7) % 7 === 0) {
+            tctx.clearRect(x, y, 1, 1);
+          } else {
+            tctx.fillStyle = leafGreens[(x + y * 3) % leafGreens.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Sand
+    this.drawTile(ctx, 'sand', (tctx) => {
+      tctx.fillStyle = '#d6cd94';
+      tctx.fillRect(0, 0, 16, 16);
+      const sandGrains = ['#c8be82', '#e2d9a4', '#b8ae74'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 5 + y * 11) % 3 === 0) {
+            tctx.fillStyle = sandGrains[(x + y) % sandGrains.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Brick
+    this.drawTile(ctx, 'brick', (tctx) => {
+      tctx.fillStyle = '#9c4c3b';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#b3aa9d';
+      tctx.fillRect(0, 3, 16, 1);
+      tctx.fillRect(0, 7, 16, 1);
+      tctx.fillRect(0, 11, 16, 1);
+      tctx.fillRect(0, 15, 16, 1);
+      tctx.fillRect(7, 0, 1, 3);
+      tctx.fillRect(15, 4, 1, 3);
+    });
+
+    // Glass
+    this.drawTile(ctx, 'glass', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = 'rgba(164, 212, 232, 0.4)';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#ffffff';
+      tctx.fillRect(0, 0, 16, 1);
+      tctx.fillRect(0, 15, 16, 1);
+      tctx.fillRect(0, 0, 1, 16);
+      tctx.fillRect(15, 0, 1, 16);
+      tctx.fillStyle = '#e8f6ff';
+      tctx.fillRect(3, 3, 2, 2);
+      tctx.fillRect(11, 11, 2, 2);
+    });
+
+    // Glowstone
+    this.drawTile(ctx, 'glowstone', (tctx) => {
+      tctx.fillStyle = '#e6bf55';
+      tctx.fillRect(0, 0, 16, 16);
+      const glowHues = ['#fff199', '#f3d366', '#d6a836'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          tctx.fillStyle = glowHues[(x * 7 + y * 13) % glowHues.length];
+          tctx.fillRect(x, y, 1, 1);
+        }
+      }
+    });
+
+    // Diamond Ore
+    this.drawTile(ctx, 'diamond_ore', (tctx) => {
+      tctx.fillStyle = '#7a7a7a';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#4cf6f3';
+      tctx.fillRect(4, 4, 3, 3);
+      tctx.fillRect(10, 8, 3, 3);
+      tctx.fillStyle = '#bdfdfc';
+      tctx.fillRect(5, 5, 1, 1);
+    });
+
+    // Gold Ore
+    this.drawTile(ctx, 'gold_ore', (tctx) => {
+      tctx.fillStyle = '#7a7a7a';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#f7d33b';
+      tctx.fillRect(4, 4, 3, 3);
+      tctx.fillRect(10, 8, 3, 3);
+    });
+
+    // Iron Ore
+    this.drawTile(ctx, 'iron_ore', (tctx) => {
+      tctx.fillStyle = '#7a7a7a';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#d8af93';
+      tctx.fillRect(3, 4, 3, 2);
+      tctx.fillRect(10, 8, 3, 2);
+    });
+
+    // Coal Ore
+    this.drawTile(ctx, 'coal_ore', (tctx) => {
+      tctx.fillStyle = '#7a7a7a';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#222222';
+      tctx.fillRect(3, 4, 3, 2);
+      tctx.fillRect(9, 7, 3, 3);
+    });
+
+    // Bedrock
+    this.drawTile(ctx, 'bedrock', (tctx) => {
+      tctx.fillStyle = '#222222';
+      tctx.fillRect(0, 0, 16, 16);
+      const greys = ['#1a1a1a', '#444444', '#333333'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 7 + y * 17) % 3 === 0) {
+            tctx.fillStyle = greys[(x + y) % greys.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Bookshelf
+    this.drawTile(ctx, 'bookshelf', (tctx) => {
+      tctx.fillStyle = '#8b5a2b';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#ef4444';
+      tctx.fillRect(2, 2, 3, 12);
+      tctx.fillStyle = '#3b82f6';
+      tctx.fillRect(6, 2, 3, 12);
+      tctx.fillStyle = '#10b981';
+      tctx.fillRect(10, 2, 3, 12);
+    });
+
+    // TNT Side
+    this.drawTile(ctx, 'tnt_side', (tctx) => {
+      tctx.fillStyle = '#c72d24';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#ffffff';
+      tctx.fillRect(0, 6, 16, 4);
+      tctx.fillStyle = '#000000';
+      tctx.font = 'bold 8px sans-serif';
+      tctx.fillText('TNT', 0, 10);
+    });
+
+    // TNT Top
+    this.drawTile(ctx, 'tnt_top', (tctx) => {
+      tctx.fillStyle = '#c72d24';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#8b0000';
+      tctx.fillRect(4, 4, 8, 8);
+    });
+
+    // Water
+    this.drawTile(ctx, 'water', (tctx) => {
+      tctx.fillStyle = 'rgba(38, 101, 190, 0.7)';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      tctx.fillRect(2, 4, 6, 1);
+      tctx.fillRect(8, 11, 5, 1);
+    });
+
+    // Flower
+    this.drawTile(ctx, 'flower', (tctx) => {
+      tctx.clearRect(0, 0, 16, 16);
+      tctx.fillStyle = '#15803d';
+      tctx.fillRect(7, 8, 2, 8);
+      tctx.fillStyle = '#dc2626';
+      tctx.fillRect(5, 3, 6, 6);
+      tctx.fillStyle = '#fde047';
+      tctx.fillRect(7, 5, 2, 2);
+    });
+
+    // Crafting Table Top
+    this.drawTile(ctx, 'crafting_table_top', (tctx) => {
+      tctx.fillStyle = '#a17e4f';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#6e522d';
+      tctx.fillRect(2, 2, 12, 12);
+      tctx.fillStyle = '#3a2512';
+      tctx.fillRect(4, 4, 8, 8);
+      tctx.fillStyle = '#3b82f6';
+      tctx.fillRect(5, 5, 2, 2);
+      tctx.fillStyle = '#ef4444';
+      tctx.fillRect(9, 5, 2, 2);
+    });
+
+    // Crafting Table Side
+    this.drawTile(ctx, 'crafting_table_side', (tctx) => {
+      tctx.fillStyle = '#a17e4f';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#6e522d';
+      tctx.fillRect(1, 1, 14, 14);
+      tctx.fillStyle = '#3a2512';
+      tctx.fillRect(3, 4, 10, 2);
+      tctx.fillRect(7, 6, 2, 6);
+    });
+
+    // Chest Front
+    this.drawTile(ctx, 'chest_front', (tctx) => {
+      tctx.fillStyle = '#8b5a2b';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#4a2e12';
+      tctx.fillRect(0, 0, 16, 1);
+      tctx.fillRect(0, 15, 16, 1);
+      tctx.fillRect(0, 7, 16, 1);
+      tctx.fillStyle = '#e2e8f0';
+      tctx.fillRect(7, 6, 2, 3);
+    });
+
+    // Chest Side
+    this.drawTile(ctx, 'chest_side', (tctx) => {
+      tctx.fillStyle = '#8b5a2b';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#4a2e12';
+      tctx.fillRect(0, 0, 16, 1);
+      tctx.fillRect(0, 15, 16, 1);
+      tctx.fillRect(0, 7, 16, 1);
+    });
+
+    // Furnace Front
+    this.drawTile(ctx, 'furnace_front', (tctx) => {
+      tctx.fillStyle = '#686868';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#383838';
+      tctx.fillRect(2, 4, 12, 9);
+      tctx.fillStyle = '#f97316';
+      tctx.fillRect(4, 7, 8, 4);
+    });
+
+    // Obsidian
+    this.drawTile(ctx, 'obsidian', (tctx) => {
+      tctx.fillStyle = '#1a1024';
+      tctx.fillRect(0, 0, 16, 16);
+      const obsColors = ['#120a1a', '#281838', '#38224d'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 13 + y * 19) % 3 === 0) {
+            tctx.fillStyle = obsColors[(x + y) % obsColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Items
+    this.drawTile(ctx, 'item_stick', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#7c5a36'; tctx.fillRect(4, 4, 8, 8); });
+    this.drawTile(ctx, 'item_pickaxe', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(4, 2, 8, 4); });
+    this.drawTile(ctx, 'item_sword', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(6, 2, 4, 10); });
+    this.drawTile(ctx, 'item_helmet', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(3, 3, 10, 8); });
+    this.drawTile(ctx, 'item_chestplate', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(2, 2, 12, 12); });
+    this.drawTile(ctx, 'item_leggings', (tctx) => { tctx.clearRect(0, 0, 16, 16); tctx.fillStyle = '#38bdf8'; tctx.fillRect(2, 2, 12, 12); });
+
+    // Snow
+    this.drawTile(ctx, 'snow', (tctx) => {
+      tctx.fillStyle = '#f1f5f9';
+      tctx.fillRect(0, 0, 16, 16);
+      const snowColors = ['#e2e8f0', '#ffffff', '#cbd5e1', '#f8fafc'];
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 11 + y * 13) % 4 === 0) {
+            tctx.fillStyle = snowColors[(x + y) % snowColors.length];
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+
+    // Cactus Top
+    this.drawTile(ctx, 'cactus_top', (tctx) => {
+      tctx.fillStyle = '#1e5e23';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#2e8b35';
+      tctx.fillRect(2, 2, 12, 12);
+      tctx.fillStyle = '#154418';
+      tctx.fillRect(6, 6, 4, 4);
+    });
+
+    // Cactus Side
+    this.drawTile(ctx, 'cactus_side', (tctx) => {
+      tctx.fillStyle = '#226827';
+      tctx.fillRect(0, 0, 16, 16);
+      // Vertical ridges
+      tctx.fillStyle = '#17491b';
+      for (let x = 0; x < 16; x += 4) {
+        tctx.fillRect(x, 0, 1, 16);
+      }
+      // Spikes
+      tctx.fillStyle = '#e2e8f0';
+      for (let x = 2; x < 16; x += 4) {
+        for (let y = 1; y < 16; y += 4) {
+          tctx.fillRect(x, y, 1, 1);
+        }
+      }
+    });
+
+    // Ice
+    this.drawTile(ctx, 'ice', (tctx) => {
+      tctx.fillStyle = '#90d5ec';
+      tctx.fillRect(0, 0, 16, 16);
+      tctx.fillStyle = '#bce6f5';
+      for (let i = 0; i < 16; i += 3) {
+        tctx.fillRect(i, (i * 2) % 16, 2, 2);
+      }
+    });
+
+    // Snow Leaves
+    this.drawTile(ctx, 'snow_leaves', (tctx) => {
+      tctx.fillStyle = '#285e23';
+      tctx.fillRect(0, 0, 16, 16);
+      // Dark needle texture
+      tctx.fillStyle = '#1a4216';
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 5 + y * 7) % 3 === 0) tctx.fillRect(x, y, 1, 1);
+        }
+      }
+      // Snow dusting on leaves
+      tctx.fillStyle = '#f8fafc';
+      for (let x = 0; x < 16; x++) {
+        for (let y = 0; y < 16; y++) {
+          if ((x * 13 + y * 19) % 5 === 0) {
+            tctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    });
+  }
+
+  public getTileName(blockType: BlockType, faceIndex: number): string {
     switch (blockType) {
       case BlockType.GRASS:
-        if (faceIndex === 2) return this.materialIndexMap.get('grass_top')!;
-        if (faceIndex === 3) return this.materialIndexMap.get('dirt')!;
-        return this.materialIndexMap.get('grass_side')!;
-
-      case BlockType.DIRT: return this.materialIndexMap.get('dirt')!;
-      case BlockType.STONE: return this.materialIndexMap.get('stone')!;
-      case BlockType.COBBLESTONE: return this.materialIndexMap.get('cobblestone')!;
+        if (faceIndex === 2) return 'grass_top';
+        if (faceIndex === 3) return 'dirt';
+        return 'grass_side';
+      case BlockType.DIRT: return 'dirt';
+      case BlockType.STONE: return 'stone';
+      case BlockType.COBBLESTONE: return 'cobblestone';
       case BlockType.WOOD:
-        if (faceIndex === 2 || faceIndex === 3) return this.materialIndexMap.get('wood_top')!;
-        return this.materialIndexMap.get('wood_side')!;
-      case BlockType.PLANKS: return this.materialIndexMap.get('planks')!;
-      case BlockType.LEAVES: return this.materialIndexMap.get('leaves')!;
-      case BlockType.SAND: return this.materialIndexMap.get('sand')!;
-      case BlockType.BRICK: return this.materialIndexMap.get('brick')!;
-      case BlockType.GLASS: return this.materialIndexMap.get('glass')!;
-      case BlockType.GLOWSTONE: return this.materialIndexMap.get('glowstone')!;
-      case BlockType.DIAMOND_ORE: return this.materialIndexMap.get('diamond_ore')!;
-      case BlockType.GOLD_ORE: return this.materialIndexMap.get('gold_ore')!;
-      case BlockType.IRON_ORE: return this.materialIndexMap.get('iron_ore')!;
-      case BlockType.COAL_ORE: return this.materialIndexMap.get('coal_ore')!;
-      case BlockType.BEDROCK: return this.materialIndexMap.get('bedrock')!;
+        if (faceIndex === 2 || faceIndex === 3) return 'wood_top';
+        return 'wood_side';
+      case BlockType.PLANKS: return 'planks';
+      case BlockType.LEAVES: return 'leaves';
+      case BlockType.SAND: return 'sand';
+      case BlockType.BRICK: return 'brick';
+      case BlockType.GLASS: return 'glass';
+      case BlockType.GLOWSTONE: return 'glowstone';
+      case BlockType.DIAMOND_ORE: return 'diamond_ore';
+      case BlockType.GOLD_ORE: return 'gold_ore';
+      case BlockType.IRON_ORE: return 'iron_ore';
+      case BlockType.COAL_ORE: return 'coal_ore';
+      case BlockType.BEDROCK: return 'bedrock';
       case BlockType.BOOKSHELF:
-        if (faceIndex === 2 || faceIndex === 3) return this.materialIndexMap.get('planks')!;
-        return this.materialIndexMap.get('bookshelf')!;
+        if (faceIndex === 2 || faceIndex === 3) return 'planks';
+        return 'bookshelf';
       case BlockType.TNT:
-        if (faceIndex === 2 || faceIndex === 3) return this.materialIndexMap.get('tnt_top')!;
-        return this.materialIndexMap.get('tnt_side')!;
-      case BlockType.WATER: return this.materialIndexMap.get('water')!;
-      case BlockType.FLOWER: return this.materialIndexMap.get('flower')!;
+        if (faceIndex === 2 || faceIndex === 3) return 'tnt_top';
+        return 'tnt_side';
+      case BlockType.WATER: return 'water';
+      case BlockType.FLOWER: return 'flower';
       case BlockType.CRAFTING_TABLE:
-        if (faceIndex === 2) return this.materialIndexMap.get('crafting_table_top')!;
-        if (faceIndex === 3) return this.materialIndexMap.get('planks')!;
-        return this.materialIndexMap.get('crafting_table_side')!;
+        if (faceIndex === 2) return 'crafting_table_top';
+        if (faceIndex === 3) return 'planks';
+        return 'crafting_table_side';
       case BlockType.CHEST:
-        if (faceIndex === 4) return this.materialIndexMap.get('chest_front')!;
-        return this.materialIndexMap.get('chest_side')!;
+        if (faceIndex === 4) return 'chest_front';
+        return 'chest_side';
       case BlockType.FURNACE:
-        if (faceIndex === 4) return this.materialIndexMap.get('furnace_front')!;
-        return this.materialIndexMap.get('stone')!;
-      case BlockType.OBSIDIAN: return this.materialIndexMap.get('obsidian')!;
-      default: return this.materialIndexMap.get('stone')!;
+        if (faceIndex === 4) return 'furnace_front';
+        return 'stone';
+      case BlockType.OBSIDIAN: return 'obsidian';
+      case BlockType.SNOW: return 'snow';
+      case BlockType.CACTUS:
+        if (faceIndex === 2 || faceIndex === 3) return 'cactus_top';
+        return 'cactus_side';
+      case BlockType.ICE: return 'ice';
+      case BlockType.SNOW_LEAVES: return 'snow_leaves';
+      default: return 'stone';
     }
   }
 
-  private generateAllTextures() {
-    this.getOrCreateTexture('dirt', (ctx) => { ctx.fillStyle = '#866043'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('grass_top', (ctx) => { ctx.fillStyle = '#55a137'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('grass_side', (ctx) => { ctx.fillStyle = '#866043'; ctx.fillRect(0, 0, 16, 16); ctx.fillStyle = '#55a137'; ctx.fillRect(0, 0, 16, 3); });
-    this.getOrCreateTexture('stone', (ctx) => { ctx.fillStyle = '#7a7a7a'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('cobblestone', (ctx) => { ctx.fillStyle = '#656565'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('wood_side', (ctx) => { ctx.fillStyle = '#5c462b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('wood_top', (ctx) => { ctx.fillStyle = '#5c462b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('planks', (ctx) => { ctx.fillStyle = '#a17e4f'; ctx.fillRect(0, 0, 16, 16); });
+  public getTileUVs(blockType: BlockType, faceIndex: number): UVRect {
+    const tileName = this.getTileName(blockType, faceIndex);
+    const pos = this.tileMap.get(tileName) || { col: 3, row: 0 }; // default stone
 
-    // Armor Textures
-    this.getOrCreateTexture('item_helmet', (ctx) => {
-      ctx.clearRect(0, 0, 16, 16);
-      ctx.fillStyle = '#38bdf8'; // Diamond helmet color
-      ctx.fillRect(3, 3, 10, 8);
-      ctx.fillRect(2, 6, 12, 5);
-      ctx.clearRect(6, 8, 4, 3);
-    });
+    const col = pos.col;
+    const row = pos.row;
 
-    this.getOrCreateTexture('item_chestplate', (ctx) => {
-      ctx.clearRect(0, 0, 16, 16);
-      ctx.fillStyle = '#38bdf8'; // Diamond chestplate color
-      ctx.fillRect(2, 2, 4, 12);
-      ctx.fillRect(10, 2, 4, 12);
-      ctx.fillRect(4, 5, 8, 9);
-      ctx.clearRect(6, 2, 4, 3);
-    });
+    const uMin = col / 8.0;
+    const uMax = (col + 1) / 8.0;
+    const vMin = 1.0 - (row + 1) / 8.0;
+    const vMax = 1.0 - row / 8.0;
 
-    this.getOrCreateTexture('item_leggings', (ctx) => {
-      ctx.clearRect(0, 0, 16, 16);
-      ctx.fillStyle = '#38bdf8'; // Diamond leggings color
-      ctx.fillRect(2, 2, 12, 5);
-      ctx.fillRect(2, 7, 4, 8);
-      ctx.fillRect(10, 7, 4, 8);
-    });
-
-    this.getOrCreateTexture('crafting_table_top', (ctx) => { ctx.fillStyle = '#a17e4f'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('crafting_table_side', (ctx) => { ctx.fillStyle = '#a17e4f'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('chest_front', (ctx) => { ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('chest_side', (ctx) => { ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('furnace_front', (ctx) => { ctx.fillStyle = '#686868'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('obsidian', (ctx) => { ctx.fillStyle = '#1a1024'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('iron_ore', (ctx) => { ctx.fillStyle = '#7a7a7a'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('coal_ore', (ctx) => { ctx.fillStyle = '#7a7a7a'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('item_stick', (ctx) => { ctx.clearRect(0, 0, 16, 16); ctx.fillStyle = '#7c5a36'; ctx.fillRect(4, 4, 8, 8); });
-    this.getOrCreateTexture('item_pickaxe', (ctx) => { ctx.clearRect(0, 0, 16, 16); ctx.fillStyle = '#38bdf8'; ctx.fillRect(4, 2, 8, 4); });
-    this.getOrCreateTexture('item_sword', (ctx) => { ctx.clearRect(0, 0, 16, 16); ctx.fillStyle = '#38bdf8'; ctx.fillRect(6, 2, 4, 10); });
-    this.getOrCreateTexture('leaves', (ctx) => { ctx.fillStyle = '#3a7d23'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('sand', (ctx) => { ctx.fillStyle = '#d6cd94'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('brick', (ctx) => { ctx.fillStyle = '#9c4c3b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('glass', (ctx) => { ctx.fillStyle = '#a4d4e8'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('glowstone', (ctx) => { ctx.fillStyle = '#e6bf55'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('diamond_ore', (ctx) => { ctx.fillStyle = '#7a7a7a'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('gold_ore', (ctx) => { ctx.fillStyle = '#7a7a7a'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('bedrock', (ctx) => { ctx.fillStyle = '#222222'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('bookshelf', (ctx) => { ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('tnt_side', (ctx) => { ctx.fillStyle = '#c72d24'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('tnt_top', (ctx) => { ctx.fillStyle = '#c72d24'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('water', (ctx) => { ctx.fillStyle = '#2665be'; ctx.fillRect(0, 0, 16, 16); });
-    this.getOrCreateTexture('flower', (ctx) => { ctx.fillStyle = '#e62222'; ctx.fillRect(6, 4, 4, 4); });
-  }
-
-  public getTexture(name: string): THREE.CanvasTexture {
-    return this.textureMap.get(name) || this.textureMap.get('stone')!;
-  }
-
-  public getBlockMaterials(blockType: BlockType): THREE.Material[] {
-    const createMat = (name: string) => {
-      const idx = this.materialIndexMap.get(name) || 0;
-      return this.masterMaterials[idx];
+    const pad = 0.001;
+    return {
+      u0: uMin + pad,
+      u1: uMax - pad,
+      v0: vMin + pad,
+      v1: vMax - pad,
     };
-    const mat = createMat('stone');
-    return [mat, mat, mat, mat, mat, mat];
+  }
+
+  public getBlockMaterials(blockType: BlockType): THREE.Material | THREE.Material[] {
+    const isTrans = blockType === BlockType.LEAVES || blockType === BlockType.GLASS || blockType === BlockType.FLOWER || blockType === BlockType.WATER;
+    return isTrans ? this.masterTransparentMaterial : this.masterOpaqueMaterial;
   }
 
   public getIconDataUrl(id: number): string {

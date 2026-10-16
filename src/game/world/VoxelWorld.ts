@@ -83,10 +83,20 @@ export class VoxelWorld {
     }
   }
 
+  private lastCenterCX: number | null = null;
+  private lastCenterCZ: number | null = null;
+
   // Infinite procedural chunk streaming around player
   public updateChunksAroundPlayer(playerX: number, playerZ: number) {
     const centerCX = Math.floor(playerX / CHUNK_SIZE_X);
     const centerCZ = Math.floor(playerZ / CHUNK_SIZE_Z);
+
+    if (centerCX === this.lastCenterCX && centerCZ === this.lastCenterCZ) {
+      return;
+    }
+
+    this.lastCenterCX = centerCX;
+    this.lastCenterCZ = centerCZ;
 
     const neededKeys = new Set<string>();
 
