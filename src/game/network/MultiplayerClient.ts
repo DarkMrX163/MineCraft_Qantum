@@ -1,20 +1,20 @@
-import Peer, { DataConnection } from 'peerjs';
+import mqtt, { MqttClient } from 'mqtt';
 import { ServerPlayer, ChatMessage } from './types';
 import { BlockType } from '../constants';
 
 export class MultiplayerClient {
-  private peer: Peer | null = null;
-  private peerConns: Map<string, DataConnection> = new Map();
-  private hostConn: DataConnection | null = null;
-  public isHost = false;
-
+  private mqttClient: MqttClient | null = null;
   private ws: WebSocket | null = null;
   private bc: BroadcastChannel | null = null;
-  private httpPollTimer: NodeJS.Timeout | null = null;
+
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   public localPlayerId: string = 'p_' + Math.random().toString(36).substring(2, 9);
   public roomId = 'default';
   public connected = false;
+  public connectionStatusText = 'Подключение...';
+
   public playerName = 'Стив';
   public playerColor = '#00d26a';
 
@@ -31,8 +31,7 @@ export class MultiplayerClient {
     isJumping: false
   };
 
-  private pendingBlockUpdates: Array<{ x: number; y: number; z: number; blockId: number }> = [];
-  private knownPlayersMap = new Map<string, ServerPlayer>();
+  private knownPlayersMap = new Map<string, ServerPlayer & { lastSeen: number }>();
 
   private onInitCallback?: (data: { playerId: string; roomId: string; players: ServerPlayer[]; blockChanges: Record<string, number> }) => void;
   private onPlayerJoinedCallback?: (player: ServerPlayer) => void;
@@ -45,51 +44,57 @@ export class MultiplayerClient {
   constructor() {}
 
   public connect(roomId: string, playerName: string, playerColor: string) {
-    this.roomId = (roomId || 'default').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-    if (!this.roomId) this.roomId = 'default';
+    const rawRoom = (roomId || 'default').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    this.roomId = rawRoom || 'default';
 
     this.playerName = playerName || 'Стив';
     this.playerColor = playerColor || '#00d26a';
 
-    // 1. Set up BroadcastChannel for local multi-tab instant sync
+    const topic = `craftcraft/v5/room/${this.roomId}`;
+
+    // 1. Set up BroadcastChannel for instant local multi-tab sync
     if (typeof BroadcastChannel !== 'undefined') {
       try {
         this.bc = new BroadcastChannel(`craftcraft_bc_${this.roomId}`);
         this.bc.onmessage = (event) => {
           const msg = event.data;
           if (!msg || msg.senderId === this.localPlayerId) return;
-
-          if (msg.type === 'move') {
-            this.handlePlayerMove(msg);
-          } else if (msg.type === 'block_update') {
-            this.handleBlockUpdate(msg);
-          } else if (msg.type === 'chat') {
-            if (this.onChatCallback) this.onChatCallback(msg.chat);
-          }
+          this.handleIncomingPayload(msg);
         };
       } catch (err) {
         console.warn('BroadcastChannel error:', err);
       }
     }
 
-    // 2. PeerJS P2P WebRTC connection (works on GitHub Pages, Vercel, Netlify, anywhere!)
-    this.initPeerJS();
-
-    // 3. Optional Node Express WebSocket & HTTP fallback
-    this.initWebSocketAndHttp();
-  }
-
-  private initPeerJS() {
-    const hostPeerId = `craftcraft_v3_${this.roomId}_host`;
-
-    // Try claiming host ID first
+    // 2. Connect to Global Public MQTT WebSocket Relay (Works on GitHub Pages, Vercel, Netlify, AI Studio, Everywhere!)
     try {
-      const hostCandidate = new Peer(hostPeerId, { debug: 0 });
+      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+      const client = mqtt.connect(brokerUrl, {
+        keepalive: 20,
+        clientId: `cc3d_${this.localPlayerId}_${Math.floor(Math.random() * 1000)}`,
+        clean: true,
+        connectTimeout: 8000,
+        reconnectPeriod: 2000
+      });
 
-      hostCandidate.on('open', () => {
-        this.peer = hostCandidate;
-        this.isHost = true;
+      this.mqttClient = client;
+
+      client.on('connect', () => {
         this.connected = true;
+        this.connectionStatusText = 'Подключено к глобальному серверу (MQTT)';
+
+        client.subscribe(topic, { qos: 0 }, (err) => {
+          if (!err) {
+            // Send presence request to ask existing players in room for state
+            this.publishMQTT({
+              type: 'presence_request',
+              senderId: this.localPlayerId,
+              playerName: this.playerName,
+              playerColor: this.playerColor,
+              state: this.lastLocalState
+            });
+          }
+        });
 
         if (this.onInitCallback) {
           this.onInitCallback({
@@ -99,171 +104,253 @@ export class MultiplayerClient {
             blockChanges: this.roomBlockChanges
           });
         }
-
-        // Host accepts incoming P2P connections from joiners
-        this.peer.on('connection', (conn) => {
-          this.setupHostConnection(conn);
-        });
       });
 
-      hostCandidate.on('error', (err) => {
-        // If host ID is taken, this client is a joiner!
-        if (err.type === 'unavailable-id' || err.type === 'peer-unavailable') {
-          hostCandidate.destroy();
-          this.initPeerJSAsJoiner(hostPeerId);
+      client.on('message', (_top, message) => {
+        try {
+          const msg = JSON.parse(message.toString());
+          if (!msg || msg.senderId === this.localPlayerId) return;
+          this.handleIncomingPayload(msg);
+        } catch (err) {
+          console.error('Error parsing MQTT message:', err);
         }
       });
-    } catch {
-      this.initPeerJSAsJoiner(hostPeerId);
-    }
-  }
 
-  private initPeerJSAsJoiner(hostPeerId: string) {
-    try {
-      this.peer = new Peer({ debug: 0 });
+      client.on('error', (err) => {
+        console.warn('MQTT Connection Warning:', err);
+        this.connected = false;
+        this.connectionStatusText = 'Переподключение...';
+      });
 
-      this.peer.on('open', (peerId) => {
-        this.localPlayerId = peerId;
-        const conn = this.peer!.connect(hostPeerId, { reliable: true });
-        this.hostConn = conn;
-
-        conn.on('open', () => {
-          this.connected = true;
-          // Send join request to host
-          conn.send({
-            type: 'join',
-            playerId: this.localPlayerId,
-            playerName: this.playerName,
-            playerColor: this.playerColor,
-            state: this.lastLocalState
-          });
-        });
-
-        conn.on('data', (dataRaw: unknown) => {
-          this.handleP2PMessage(dataRaw);
-        });
-
-        conn.on('close', () => {
-          this.connected = false;
-          // If host disconnects, try claiming host role
-          setTimeout(() => this.initPeerJS(), 1000);
-        });
+      client.on('offline', () => {
+        this.connected = false;
       });
     } catch (err) {
-      console.warn('P2P Joiner error:', err);
+      console.warn('MQTT Init Error:', err);
+    }
+
+    // 3. Optional Node Express WebSocket sync for AI Studio environment
+    this.initLocalWebSocketServer();
+
+    // 4. Start Heartbeat & Stale Player Cleanup
+    this.startTimers();
+  }
+
+  private initLocalWebSocketServer() {
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(this.roomId)}&name=${encodeURIComponent(this.playerName)}&color=${encodeURIComponent(this.playerColor)}`;
+
+      this.ws = new WebSocket(wsUrl);
+      this.ws.onopen = () => { this.connected = true; };
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg && msg.senderId !== this.localPlayerId) {
+            this.handleIncomingPayload(msg);
+          }
+        } catch {
+          // Ignore
+        }
+      };
+    } catch {
+      // Ignore if on static hosting without Express WS server
     }
   }
 
-  private setupHostConnection(conn: DataConnection) {
-    conn.on('open', () => {
-      this.peerConns.set(conn.peer, conn);
-    });
+  private startTimers() {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.cleanupInterval) clearInterval(this.cleanupInterval);
 
-    conn.on('data', (dataRaw: unknown) => {
-      const msg = dataRaw as { type: string; playerId?: string; playerName?: string; playerColor?: string; state?: ServerPlayer; [key: string]: unknown };
-      if (!msg) return;
+    // Heartbeat every 2.5 seconds
+    this.heartbeatInterval = setInterval(() => {
+      this.publishMQTT({
+        type: 'heartbeat',
+        senderId: this.localPlayerId,
+        playerName: this.playerName,
+        playerColor: this.playerColor,
+        state: this.lastLocalState
+      });
+    }, 2500);
 
-      if (msg.type === 'join') {
-        const joinerState: ServerPlayer = {
-          id: conn.peer,
-          name: (msg.playerName as string) || 'Стив',
-          color: (msg.playerColor as string) || '#00d26a',
-          x: 0,
-          y: 25,
-          z: 0,
-          yaw: 0,
-          pitch: 0,
-          holdingBlock: 1,
-          isMoving: false,
-          isJumping: false
-        };
-
-        this.knownPlayersMap.set(conn.peer, joinerState);
-
-        // Reply to joiner with current world init
-        conn.send({
-          type: 'init',
-          playerId: conn.peer,
-          roomId: this.roomId,
-          players: Array.from(this.knownPlayersMap.values()).filter(p => p.id !== conn.peer),
-          blockChanges: this.roomBlockChanges
-        });
-
-        // Broadcast new player join to all other peers
-        this.broadcastP2P(conn.peer, {
-          type: 'player_joined',
-          player: joinerState
-        });
-
-        if (this.onPlayerJoinedCallback) {
-          this.onPlayerJoinedCallback(joinerState);
+    // Cleanup stale players (inactive > 8s)
+    this.cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [id, player] of this.knownPlayersMap.entries()) {
+        if (now - player.lastSeen > 8500) {
+          this.knownPlayersMap.delete(id);
+          if (this.onPlayerLeftCallback) {
+            this.onPlayerLeftCallback(id);
+          }
         }
-      } else {
-        // Relay move/block/chat messages to all other P2P peers
-        this.handleP2PMessage(msg);
-        this.broadcastP2P(conn.peer, msg);
       }
-    });
-
-    conn.on('close', () => {
-      this.peerConns.delete(conn.peer);
-      this.knownPlayersMap.delete(conn.peer);
-      this.broadcastP2P(null, { type: 'player_left', playerId: conn.peer });
-      if (this.onPlayerLeftCallback) {
-        this.onPlayerLeftCallback(conn.peer);
-      }
-    });
+    }, 3000);
   }
 
-  private handleP2PMessage(dataRaw: unknown) {
-    const msg = dataRaw as { type: string; [key: string]: unknown };
-    if (!msg) return;
+  private publishMQTT(payload: Record<string, unknown>) {
+    if (this.mqttClient && this.mqttClient.connected) {
+      const topic = `craftcraft/v5/room/${this.roomId}`;
+      try {
+        this.mqttClient.publish(topic, JSON.stringify(payload), { qos: 0 });
+      } catch {
+        // Ignore publish error
+      }
+    }
+  }
 
-    switch (msg.type) {
-      case 'init': {
-        this.connected = true;
-        const players = (msg.players as ServerPlayer[]) || [];
+  private handleIncomingPayload(msg: Record<string, unknown>) {
+    const type = msg.type as string;
+    const senderId = (msg.senderId as string) || (msg.id as string);
+
+    if (!senderId || senderId === this.localPlayerId) return;
+
+    const now = Date.now();
+
+    switch (type) {
+      case 'presence_request': {
+        const pName = (msg.playerName as string) || 'Стив';
+        const pColor = (msg.playerColor as string) || '#00d26a';
+
+        if (!this.knownPlayersMap.has(senderId)) {
+          const newPlayer: ServerPlayer & { lastSeen: number } = {
+            id: senderId,
+            name: pName,
+            color: pColor,
+            x: 0, y: 25, z: 0, yaw: 0, pitch: 0,
+            holdingBlock: 1, isMoving: false, isJumping: false,
+            lastSeen: now
+          };
+          this.knownPlayersMap.set(senderId, newPlayer);
+          if (this.onPlayerJoinedCallback) {
+            this.onPlayerJoinedCallback(newPlayer);
+          }
+        }
+
+        // Send presence_response back to answer the requester
+        this.publishMQTT({
+          type: 'presence_response',
+          senderId: this.localPlayerId,
+          playerName: this.playerName,
+          playerColor: this.playerColor,
+          state: this.lastLocalState,
+          blockChanges: this.roomBlockChanges
+        });
+        break;
+      }
+
+      case 'presence_response': {
+        const pName = (msg.playerName as string) || 'Стив';
+        const pColor = (msg.playerColor as string) || '#00d26a';
+        const st = (msg.state as ServerPlayer) || {};
         const blockChanges = (msg.blockChanges as Record<string, number>) || {};
 
-        players.forEach(p => this.knownPlayersMap.set(p.id, p));
         Object.assign(this.roomBlockChanges, blockChanges);
+
+        if (!this.knownPlayersMap.has(senderId)) {
+          const newPlayer: ServerPlayer & { lastSeen: number } = {
+            id: senderId,
+            name: pName,
+            color: pColor,
+            x: Number(st.x) || 0,
+            y: Number(st.y) || 25,
+            z: Number(st.z) || 0,
+            yaw: Number(st.yaw) || 0,
+            pitch: Number(st.pitch) || 0,
+            holdingBlock: Number(st.holdingBlock) || 1,
+            isMoving: !!st.isMoving,
+            isJumping: !!st.isJumping,
+            lastSeen: now
+          };
+          this.knownPlayersMap.set(senderId, newPlayer);
+          if (this.onPlayerJoinedCallback) {
+            this.onPlayerJoinedCallback(newPlayer);
+          }
+        } else {
+          const existing = this.knownPlayersMap.get(senderId)!;
+          existing.lastSeen = now;
+        }
 
         if (this.onInitCallback) {
           this.onInitCallback({
             playerId: this.localPlayerId,
             roomId: this.roomId,
-            players,
-            blockChanges
+            players: Array.from(this.knownPlayersMap.values()),
+            blockChanges: this.roomBlockChanges
           });
         }
         break;
       }
 
-      case 'player_joined': {
-        const p = msg.player as ServerPlayer;
-        if (p && p.id !== this.localPlayerId) {
-          this.knownPlayersMap.set(p.id, p);
+      case 'heartbeat': {
+        const pName = (msg.playerName as string) || 'Стив';
+        const pColor = (msg.playerColor as string) || '#00d26a';
+        const st = (msg.state as ServerPlayer) || {};
+
+        if (!this.knownPlayersMap.has(senderId)) {
+          const newPlayer: ServerPlayer & { lastSeen: number } = {
+            id: senderId,
+            name: pName,
+            color: pColor,
+            x: Number(st.x) || 0,
+            y: Number(st.y) || 25,
+            z: Number(st.z) || 0,
+            yaw: Number(st.yaw) || 0,
+            pitch: Number(st.pitch) || 0,
+            holdingBlock: Number(st.holdingBlock) || 1,
+            isMoving: !!st.isMoving,
+            isJumping: !!st.isJumping,
+            lastSeen: now
+          };
+          this.knownPlayersMap.set(senderId, newPlayer);
           if (this.onPlayerJoinedCallback) {
-            this.onPlayerJoinedCallback(p);
+            this.onPlayerJoinedCallback(newPlayer);
           }
+        } else {
+          const existing = this.knownPlayersMap.get(senderId)!;
+          existing.lastSeen = now;
         }
         break;
       }
 
       case 'move': {
-        const senderId = (msg.senderId as string) || (msg.id as string);
-        if (senderId && senderId !== this.localPlayerId) {
-          this.handlePlayerMove({
-            id: senderId,
-            x: Number(msg.x) || 0,
-            y: Number(msg.y) || 0,
-            z: Number(msg.z) || 0,
-            yaw: Number(msg.yaw) || 0,
-            pitch: Number(msg.pitch) || 0,
-            holdingBlock: Number(msg.holdingBlock) || 1,
-            isMoving: !!msg.isMoving,
-            isJumping: !!msg.isJumping
-          });
+        const moveData = {
+          id: senderId,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+          z: Number(msg.z) || 0,
+          yaw: Number(msg.yaw) || 0,
+          pitch: Number(msg.pitch) || 0,
+          holdingBlock: Number(msg.holdingBlock) || 1,
+          isMoving: !!msg.isMoving,
+          isJumping: !!msg.isJumping
+        };
+
+        if (this.knownPlayersMap.has(senderId)) {
+          const existing = this.knownPlayersMap.get(senderId)!;
+          existing.lastSeen = now;
+          existing.x = moveData.x;
+          existing.y = moveData.y;
+          existing.z = moveData.z;
+          existing.yaw = moveData.yaw;
+          existing.pitch = moveData.pitch;
+          existing.holdingBlock = moveData.holdingBlock;
+          existing.isMoving = moveData.isMoving;
+          existing.isJumping = moveData.isJumping;
+        } else {
+          const newPlayer: ServerPlayer & { lastSeen: number } = {
+            name: (msg.senderName as string) || 'Стив',
+            color: (msg.senderColor as string) || '#00d26a',
+            ...moveData,
+            lastSeen: now
+          };
+          this.knownPlayersMap.set(senderId, newPlayer);
+          if (this.onPlayerJoinedCallback) {
+            this.onPlayerJoinedCallback(newPlayer);
+          }
+        }
+
+        if (this.onPlayerMovedCallback) {
+          this.onPlayerMovedCallback(moveData);
         }
         break;
       }
@@ -282,7 +369,7 @@ export class MultiplayerClient {
             y: by,
             z: bz,
             blockId: bId,
-            byPlayer: (msg.senderId as string) || 'p2p'
+            byPlayer: senderId
           });
         }
         break;
@@ -296,108 +383,13 @@ export class MultiplayerClient {
       }
 
       case 'player_left': {
-        const leftId = msg.playerId as string;
-        if (leftId) {
-          this.knownPlayersMap.delete(leftId);
-          if (this.onPlayerLeftCallback) {
-            this.onPlayerLeftCallback(leftId);
-          }
+        this.knownPlayersMap.delete(senderId);
+        if (this.onPlayerLeftCallback) {
+          this.onPlayerLeftCallback(senderId);
         }
         break;
       }
     }
-  }
-
-  private broadcastP2P(excludePeerId: string | null, payload: unknown) {
-    for (const [peerId, conn] of this.peerConns.entries()) {
-      if (excludePeerId && peerId === excludePeerId) continue;
-      if (conn.open) {
-        try {
-          conn.send(payload);
-        } catch {
-          // Ignore
-        }
-      }
-    }
-  }
-
-  private handlePlayerMove(msg: { id: string; x: number; y: number; z: number; yaw: number; pitch: number; holdingBlock: number; isMoving: boolean; isJumping: boolean }) {
-    if (this.onPlayerMovedCallback && msg.id !== this.localPlayerId) {
-      this.onPlayerMovedCallback(msg);
-    }
-  }
-
-  private handleBlockUpdate(msg: { x: number; y: number; z: number; blockId: number; byPlayer: string }) {
-    const key = `${msg.x},${msg.y},${msg.z}`;
-    this.roomBlockChanges[key] = msg.blockId;
-    if (this.onBlockUpdateCallback) {
-      this.onBlockUpdateCallback(msg);
-    }
-  }
-
-  private initWebSocketAndHttp() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(this.roomId)}&name=${encodeURIComponent(this.playerName)}&color=${encodeURIComponent(this.playerColor)}`;
-
-    try {
-      this.ws = new WebSocket(wsUrl);
-      this.ws.onopen = () => { this.connected = true; };
-      this.ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          this.handleP2PMessage(msg);
-        } catch {
-          // Ignore
-        }
-      };
-    } catch {
-      // Ignore if no WS server
-    }
-
-    // HTTP polling backup if server is present
-    if (this.httpPollTimer) clearInterval(this.httpPollTimer);
-    this.httpPollTimer = setInterval(async () => {
-      try {
-        const blocksToSend = [...this.pendingBlockUpdates];
-        this.pendingBlockUpdates = [];
-
-        const res = await fetch(`/api/room/${encodeURIComponent(this.roomId)}/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            playerId: this.localPlayerId,
-            name: this.playerName,
-            color: this.playerColor,
-            x: this.lastLocalState.x,
-            y: this.lastLocalState.y,
-            z: this.lastLocalState.z,
-            yaw: this.lastLocalState.yaw,
-            pitch: this.lastLocalState.pitch,
-            holdingBlock: this.lastLocalState.holdingBlock,
-            isMoving: this.lastLocalState.isMoving,
-            isJumping: this.lastLocalState.isJumping,
-            blockUpdates: blocksToSend
-          })
-        });
-
-        if (res.ok) {
-          this.connected = true;
-          const data = await res.json();
-          if (data.players) {
-            data.players.forEach((sp: ServerPlayer) => {
-              if (sp.id !== this.localPlayerId && !this.knownPlayersMap.has(sp.id)) {
-                this.knownPlayersMap.set(sp.id, sp);
-                if (this.onPlayerJoinedCallback) this.onPlayerJoinedCallback(sp);
-              } else if (sp.id !== this.localPlayerId && this.onPlayerMovedCallback) {
-                this.onPlayerMovedCallback(sp);
-              }
-            });
-          }
-        }
-      } catch {
-        // Ignore REST fetch errors on static hosting like GitHub Pages
-      }
-    }, 250);
   }
 
   public sendMove(x: number, y: number, z: number, yaw: number, pitch: number, holdingBlock: BlockType, isMoving: boolean, isJumping: boolean) {
@@ -415,23 +407,20 @@ export class MultiplayerClient {
     const payload = {
       type: 'move',
       senderId: this.localPlayerId,
-      id: this.localPlayerId,
+      senderName: this.playerName,
+      senderColor: this.playerColor,
       ...this.lastLocalState
     };
 
-    // 1. Send via PeerJS WebRTC P2P
-    if (this.isHost) {
-      this.broadcastP2P(null, payload);
-    } else if (this.hostConn && this.hostConn.open) {
-      try { this.hostConn.send(payload); } catch {}
-    }
+    // 1. Publish via Global MQTT WebSocket Relay
+    this.publishMQTT(payload);
 
-    // 2. Send via BroadcastChannel
+    // 2. Publish via BroadcastChannel
     if (this.bc) {
       try { this.bc.postMessage(payload); } catch {}
     }
 
-    // 3. Send via WebSocket if open
+    // 3. Publish via Express WebSocket
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try { this.ws.send(JSON.stringify(payload)); } catch {}
     }
@@ -444,7 +433,6 @@ export class MultiplayerClient {
 
     const key = `${bx},${by},${bz}`;
     this.roomBlockChanges[key] = blockId;
-    this.pendingBlockUpdates.push({ x: bx, y: by, z: bz, blockId });
 
     const payload = {
       type: 'block_update',
@@ -455,11 +443,7 @@ export class MultiplayerClient {
       blockId
     };
 
-    if (this.isHost) {
-      this.broadcastP2P(null, payload);
-    } else if (this.hostConn && this.hostConn.open) {
-      try { this.hostConn.send(payload); } catch {}
-    }
+    this.publishMQTT(payload);
 
     if (this.bc) {
       try { this.bc.postMessage(payload); } catch {}
@@ -486,11 +470,7 @@ export class MultiplayerClient {
       chat: chatMsg
     };
 
-    if (this.isHost) {
-      this.broadcastP2P(null, payload);
-    } else if (this.hostConn && this.hostConn.open) {
-      try { this.hostConn.send(payload); } catch {}
-    }
+    this.publishMQTT(payload);
 
     if (this.bc) {
       try { this.bc.postMessage(payload); } catch {}
@@ -512,19 +492,20 @@ export class MultiplayerClient {
   public onError(cb: NonNullable<MultiplayerClient['onErrorCallback']>) { this.onErrorCallback = cb; }
 
   public disconnect() {
-    if (this.httpPollTimer) {
-      clearInterval(this.httpPollTimer);
-      this.httpPollTimer = null;
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
     }
-    this.peerConns.forEach(c => c.close());
-    this.peerConns.clear();
-    if (this.hostConn) {
-      this.hostConn.close();
-      this.hostConn = null;
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
     }
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
+    if (this.mqttClient) {
+      try {
+        this.publishMQTT({ type: 'player_left', senderId: this.localPlayerId });
+        this.mqttClient.end(true);
+      } catch {}
+      this.mqttClient = null;
     }
     if (this.ws) {
       this.ws.close();
