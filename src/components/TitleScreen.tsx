@@ -239,26 +239,62 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
       )}
 
       {/* Main Minecraft Java Menu Buttons Column */}
-      <div className="relative z-10 w-full max-w-sm flex flex-col gap-3.5 my-auto">
+      <div className="relative z-10 w-full max-w-sm flex flex-col gap-3 my-auto">
+        {/* Quick Play Public Global Server Button */}
+        <button
+          type="button"
+          onClick={() => handleStartMultiplayer('default')}
+          className="relative w-full py-3.5 px-4 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white hover:text-yellow-200 font-black text-base tracking-widest uppercase border-t-2 border-l-2 border-emerald-400 border-b-2 border-r-2 border-emerald-950 shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_12px_rgba(0,0,0,0.8)] flex items-center justify-center gap-2.5 transition-all select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#113a17] animate-in fade-in"
+        >
+          <Globe className="w-5 h-5 text-yellow-300 animate-pulse" />
+          <span>🔥 БЫСТРАЯ ИГРА (Общий мир)</span>
+        </button>
+
         {/* Singleplayer Button */}
         <button
           type="button"
           onClick={handleStartSinglePlayer}
-          className="relative w-full py-3.5 px-4 bg-[#6e6e6e] hover:bg-[#858585] active:bg-[#525252] text-white hover:text-[#ffffa0] font-bold text-base tracking-widest uppercase border-t-2 border-l-2 border-[#aaaaaa] border-b-2 border-r-2 border-[#333333] shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_10px_rgba(0,0,0,0.6)] flex items-center justify-center gap-2.5 transition-colors select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#242424]"
+          className="relative w-full py-3 px-4 bg-[#6e6e6e] hover:bg-[#858585] active:bg-[#525252] text-white hover:text-[#ffffa0] font-bold text-sm tracking-widest uppercase border-t-2 border-l-2 border-[#aaaaaa] border-b-2 border-r-2 border-[#333333] shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_10px_rgba(0,0,0,0.6)] flex items-center justify-center gap-2.5 transition-colors select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#242424]"
         >
-          <Play className="w-5 h-5 fill-current" />
+          <Play className="w-4 h-4 fill-current" />
           <span>Одиночная игра</span>
         </button>
 
-        {/* Multiplayer Button */}
+        {/* Multiplayer Server Browser Button */}
         <button
           type="button"
           onClick={() => { playClick(); setShowMultiplayerPrompt(true); }}
-          className="relative w-full py-3.5 px-4 bg-[#6e6e6e] hover:bg-[#858585] active:bg-[#525252] text-white hover:text-[#ffffa0] font-bold text-base tracking-widest uppercase border-t-2 border-l-2 border-[#aaaaaa] border-b-2 border-r-2 border-[#333333] shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_10px_rgba(0,0,0,0.6)] flex items-center justify-center gap-2.5 transition-colors select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#242424]"
+          className="relative w-full py-3 px-4 bg-[#6e6e6e] hover:bg-[#858585] active:bg-[#525252] text-white hover:text-[#ffffa0] font-bold text-sm tracking-widest uppercase border-t-2 border-l-2 border-[#aaaaaa] border-b-2 border-r-2 border-[#333333] shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_10px_rgba(0,0,0,0.6)] flex items-center justify-center gap-2.5 transition-colors select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#242424]"
         >
-          <Globe className="w-5 h-5 text-emerald-400" />
-          <span>Сетевая игра {activeRooms.length > 0 && `(${activeRooms.reduce((acc, r) => acc + r.playerCount, 0)} онлайн)`}</span>
+          <Globe className="w-4 h-4 text-emerald-400" />
+          <span>Выбор комнаты / Ввести PIN {activeRooms.length > 0 && `(${activeRooms.reduce((acc, r) => acc + r.playerCount, 0)} онлайн)`}</span>
         </button>
+
+        {/* Live Active Server Worlds directly on main menu */}
+        {activeRooms.length > 0 && (
+          <div className="w-full bg-[#1b140e]/90 border border-emerald-500/50 p-2.5 rounded-none shadow-lg text-left text-xs space-y-1.5">
+            <div className="text-[10px] text-amber-300 font-bold uppercase tracking-wider flex items-center justify-between">
+              <span>🟢 Кто-то сейчас играет online:</span>
+              <span className="text-emerald-400 font-mono">1 клик войти</span>
+            </div>
+            {activeRooms.slice(0, 3).map((r) => (
+              <div key={r.roomId} className="flex items-center justify-between bg-[#100b07] p-2 border border-[#3d2e20]">
+                <div className="truncate pr-2">
+                  <span className="text-emerald-400 font-bold font-mono">#{r.roomId}</span>
+                  <span className="text-[#a89582] text-[10px] ml-1">({r.playerCount} чел)</span>
+                  <div className="text-[9px] text-[#7a6858] truncate">{r.players.map(p => p.name).join(', ')}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleStartMultiplayer(r.roomId)}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black text-[10px] uppercase shrink-0"
+                >
+                  Войти
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Settings & Character Options */}
         <div className="grid grid-cols-2 gap-3 mt-1">

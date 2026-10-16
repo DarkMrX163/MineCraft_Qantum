@@ -30,8 +30,14 @@ interface RoomData {
   blockChanges: Record<string, number>;
 }
 
+interface PlayerEntry {
+  ws?: WebSocket;
+  state: PlayerState;
+  lastSeen: number;
+}
+
 const rooms = new Map<string, {
-  players: Map<string, { ws: WebSocket; state: PlayerState }>;
+  players: Map<string, PlayerEntry>;
   blockChanges: Record<string, number>;
   lastEventTime: number;
 }>();
@@ -82,7 +88,23 @@ function getOrCreateRoom(roomId: string) {
   return room;
 }
 
-// Global server-wide event trigger loop (runs every 45-90 seconds per room)
+// Idle player cleanup timer (for players using HTTP sync or disconnected WS)
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, room] of rooms.entries()) {
+    for (const [playerId, client] of room.players.entries()) {
+      if (now - client.lastSeen > 12000) {
+        room.players.delete(playerId);
+        broadcastToRoom(roomId, playerId, {
+          type: 'player_left',
+          playerId
+        });
+      }
+    }
+  }
+}, 5000);
+
+// Global server-wide event trigger loop
 const RANDOM_EVENTS = [
   { id: 'METEOR_SHOWER', title: 'МЕТЕОРИТНЫЙ ДОЖДЬ', desc: 'С неба падают пылающие метеориты с редкой рудой!', duration: 25 },
   { id: 'MOB_INVASION', title: 'ВНЕЗАПНОЕ НАПАДЕНИЕ', desc: 'Орда монстров атаковала мир! Защищайте постройки!', duration: 30 },
@@ -93,7 +115,7 @@ const RANDOM_EVENTS = [
 function checkRoomEvents() {
   const now = Date.now();
   for (const [roomId, room] of rooms.entries()) {
-    if (room.players.size > 0 && now - room.lastEventTime > 50000) { // Every ~50s
+    if (room.players.size > 0 && now - room.lastEventTime > 50000) {
       room.lastEventTime = now;
       const event = RANDOM_EVENTS[Math.floor(Math.random() * RANDOM_EVENTS.length)];
       broadcastToRoom(roomId, null, {
@@ -113,7 +135,7 @@ function broadcastToRoom(roomId: string, excludePlayerId: string | null, payload
   const msg = JSON.stringify(payload);
   for (const [id, client] of room.players.entries()) {
     if (excludePlayerId && id === excludePlayerId) continue;
-    if (client.ws.readyState === WebSocket.OPEN) {
+    if (client.ws && client.ws.readyState === WebSocket.OPEN) {
       client.ws.send(msg);
     }
   }
@@ -157,6 +179,91 @@ async function startServer() {
     });
   });
 
+  // HTTP Polling fallback sync endpoint
+  app.post('/api/room/:roomId/sync', (req, res) => {
+    const roomId = (req.params.roomId || 'default').trim().toLowerCase().slice(0, 32);
+    const { playerId, name, color, x, y, z, yaw, pitch, holdingBlock, isMoving, isJumping, blockUpdates } = req.body || {};
+
+    if (!playerId) {
+      return res.status(400).json({ error: 'Missing playerId' });
+    }
+
+    const room = getOrCreateRoom(roomId);
+    const now = Date.now();
+
+    let playerEntry = room.players.get(playerId);
+    if (!playerEntry) {
+      if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
+        return res.status(403).json({ error: 'Room is full' });
+      }
+      playerEntry = {
+        state: {
+          id: playerId,
+          name: name || 'Стив',
+          color: color || '#00d26a',
+          x: Number(x) || 0,
+          y: Number(y) || 25,
+          z: Number(z) || 0,
+          yaw: Number(yaw) || 0,
+          pitch: Number(pitch) || 0,
+          holdingBlock: Number(holdingBlock) || 1,
+          isMoving: !!isMoving,
+          isJumping: !!isJumping
+        },
+        lastSeen: now
+      };
+      room.players.set(playerId, playerEntry);
+
+      broadcastToRoom(roomId, playerId, {
+        type: 'player_joined',
+        player: playerEntry.state
+      });
+    } else {
+      playerEntry.lastSeen = now;
+      playerEntry.state.x = Number(x) || 0;
+      playerEntry.state.y = Number(y) || 25;
+      playerEntry.state.z = Number(z) || 0;
+      playerEntry.state.yaw = Number(yaw) || 0;
+      playerEntry.state.pitch = Number(pitch) || 0;
+      playerEntry.state.holdingBlock = Number(holdingBlock) || 1;
+      playerEntry.state.isMoving = !!isMoving;
+      playerEntry.state.isJumping = !!isJumping;
+    }
+
+    if (Array.isArray(blockUpdates) && blockUpdates.length > 0) {
+      for (const bu of blockUpdates) {
+        const bx = Math.floor(Number(bu.x));
+        const by = Math.floor(Number(bu.y));
+        const bz = Math.floor(Number(bu.z));
+        const bId = Number(bu.blockId);
+        const key = `${bx},${by},${bz}`;
+        room.blockChanges[key] = bId;
+
+        broadcastToRoom(roomId, playerId, {
+          type: 'block_update',
+          x: bx,
+          y: by,
+          z: bz,
+          blockId: bId,
+          byPlayer: playerId,
+          playerName: name || 'Стив'
+        });
+      }
+      scheduleWorldSave();
+    }
+
+    const otherPlayers = Array.from(room.players.values())
+      .filter(p => p.state.id !== playerId)
+      .map(p => p.state);
+
+    res.json({
+      playerId,
+      roomId,
+      players: otherPlayers,
+      blockChanges: room.blockChanges
+    });
+  });
+
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -176,13 +283,11 @@ async function startServer() {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url || '', `http://${request.headers.host}`);
-    if (url.pathname === '/ws') {
+    const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+    if (url.pathname === '/ws' || url.pathname.startsWith('/ws')) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
-    } else {
-      socket.destroy();
     }
   });
 
@@ -218,7 +323,7 @@ async function startServer() {
       isJumping: false
     };
 
-    room.players.set(playerId, { ws, state: initialPlayerState });
+    room.players.set(playerId, { ws, state: initialPlayerState, lastSeen: Date.now() });
 
     const existingPlayers = Array.from(room.players.values())
       .filter(p => p.state.id !== playerId)
