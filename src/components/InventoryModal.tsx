@@ -229,12 +229,18 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
     }
   };
 
-  const renderSlot = (item: ItemStack | null, onClick: (e: React.MouseEvent) => void, extraClasses = '') => {
+  const renderSlot = (
+    item: ItemStack | null,
+    onClick: (e: React.MouseEvent) => void,
+    extraClasses = '',
+    key?: string | number
+  ) => {
     const iconUrl = item ? texManager.getIconDataUrl(item.itemId) : '';
     const name = item ? getItemName(item.itemId) : '';
 
     return (
       <button
+        key={key}
         onClick={onClick}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -365,7 +371,12 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               <span className="text-[11px] font-bold text-stone-400 mb-0.5">Крафт 2x2</span>
               <div className="grid grid-cols-2 gap-1.5">
                 {[0, 1, 2, 3].map((idx) =>
-                  renderSlot(craftingGrid[idx], (e) => handleSlotClick('craft', idx, e.button === 2))
+                  renderSlot(
+                    craftingGrid[idx],
+                    (e) => handleSlotClick('craft', idx, e.button === 2),
+                    '',
+                    `craft-slot-${idx}`
+                  )
                 )}
               </div>
             </div>
@@ -402,7 +413,12 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
           </span>
           <div className="grid grid-cols-9 gap-1.5 bg-stone-950/70 p-3 rounded-2xl border border-stone-800 max-h-[38vh] overflow-y-auto">
             {inventoryGrid.map((item, idx) =>
-              renderSlot(item, (e) => handleSlotClick('inv', idx, e.button === 2))
+              renderSlot(
+                item,
+                (e) => handleSlotClick('inv', idx, e.button === 2),
+                '',
+                `inv-slot-${idx}`
+              )
             )}
           </div>
         </div>
@@ -431,7 +447,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   onSelectHotbarIdx(idx);
                   handleSlotClick('hotbar', idx, e.button === 2);
                 },
-                isSelected ? 'border-amber-400 ring-2 ring-amber-400 bg-amber-500/20 scale-105' : ''
+                isSelected ? 'border-amber-400 ring-2 ring-amber-400 bg-amber-500/20 scale-105' : '',
+                `hotbar-slot-${idx}`
               );
             })}
           </div>

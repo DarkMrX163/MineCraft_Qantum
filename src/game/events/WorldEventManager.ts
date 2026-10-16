@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { VoxelWorld } from '../world/VoxelWorld';
-import { BLOCK_DEFS, BlockType } from '../constants';
+import { BLOCK_DEFS, BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Z } from '../constants';
 import { SoundEffects } from '../audio/SoundEffects';
 import { PlayerStats } from '../player/PlayerStats';
 import { DroppedItemManager } from '../entities/DroppedItemEntity';
@@ -845,7 +845,7 @@ export class WorldEventManager {
     });
   }
 
-  private createExplosionEffectsAndCrater(impactPos: THREE.Vector3, stats?: PlayerStats) {
+  private createExplosionEffectsAndCrater(impactPos: THREE.Vector3, stats?: PlayerStats, playerPos?: THREE.Vector3) {
     const cx = Math.floor(impactPos.x);
     const cy = Math.floor(impactPos.y);
     const cz = Math.floor(impactPos.z);
@@ -857,12 +857,12 @@ export class WorldEventManager {
       stats.damageFlashTimer = 0.35;
     }
 
-    // 2. Spawn 45 Fiery Explosion Particles (embers, smoke, fire)
+    // 2. Spawn 20 Fiery Explosion Particles (embers, smoke, fire)
     const particleGeo = new THREE.BoxGeometry(0.25, 0.25, 0.25);
     const fireColors = [0xff4500, 0xff8c00, 0xffd700, 0x333333, 0x111111];
 
-    for (let i = 0; i < 45; i++) {
-      const color = fireColors[Math.floor(Math.random() * fireColors.length)];
+    for (let i = 0; i < 20; i++) {
+      const color = fireColors[i % fireColors.length];
       const mat = new THREE.MeshBasicMaterial({ color });
       const pMesh = new THREE.Mesh(particleGeo, mat);
 
@@ -873,9 +873,9 @@ export class WorldEventManager {
       );
 
       const vel = new THREE.Vector3(
-        (Math.random() - 0.5) * 14,
-        Math.random() * 12 + 4,
-        (Math.random() - 0.5) * 14
+        (Math.random() - 0.5) * 12,
+        Math.random() * 10 + 3,
+        (Math.random() - 0.5) * 12
       );
 
       this.scene.add(pMesh);
@@ -883,13 +883,14 @@ export class WorldEventManager {
         mesh: pMesh,
         velocity: vel,
         life: 0,
-        maxLife: 0.6 + Math.random() * 0.5,
+        maxLife: 0.5 + Math.random() * 0.4,
       });
     }
 
     // 3. EXCAVATE SPHERICAL CRATER & PLACE METEORITE ORES / OBSIDIAN
     const craterRadius = 3.6;
     const rSq = craterRadius * craterRadius;
+    const affectedChunks = new Set<string>();
 
     for (let dx = -4; dx <= 4; dx++) {
       for (let dy = -4; dy <= 4; dy++) {
@@ -907,37 +908,53 @@ export class WorldEventManager {
 
             const dist = Math.sqrt(distSq);
 
+            // Set block with notify = false to avoid rebuilding chunks 300 times in a single loop
             if (dist < craterRadius - 0.9) {
               // Inner core: Hollow out air crater!
-              this.world.setBlock(bx, by, bz, BlockType.AIR);
+              this.world.setBlock(bx, by, bz, BlockType.AIR, false);
             } else {
               // Outer lining/bottom of crater: replace with obsidian, glowstone, ores & scorched ground
               const rand = Math.random();
               if (rand < 0.35) {
-                this.world.setBlock(bx, by, bz, BlockType.OBSIDIAN);
+                this.world.setBlock(bx, by, bz, BlockType.OBSIDIAN, false);
               } else if (rand < 0.55) {
-                this.world.setBlock(bx, by, bz, BlockType.GLOWSTONE);
+                this.world.setBlock(bx, by, bz, BlockType.GLOWSTONE, false);
               } else if (rand < 0.70) {
-                this.world.setBlock(bx, by, bz, BlockType.DIAMOND_ORE);
+                this.world.setBlock(bx, by, bz, BlockType.DIAMOND_ORE, false);
               } else if (rand < 0.85) {
-                this.world.setBlock(bx, by, bz, BlockType.GOLD_ORE);
+                this.world.setBlock(bx, by, bz, BlockType.GOLD_ORE, false);
               } else {
-                this.world.setBlock(bx, by, bz, BlockType.COBBLESTONE);
+                this.world.setBlock(bx, by, bz, BlockType.COBBLESTONE, false);
               }
             }
+
+            // Record affected chunks
+            const chunkX = Math.floor(bx / CHUNK_SIZE_X);
+            const chunkZ = Math.floor(bz / CHUNK_SIZE_Z);
+            affectedChunks.add(this.world.getChunkKey(chunkX, chunkZ));
+
+            const lx = ((bx % CHUNK_SIZE_X) + CHUNK_SIZE_X) % CHUNK_SIZE_X;
+            const lz = ((bz % CHUNK_SIZE_Z) + CHUNK_SIZE_Z) % CHUNK_SIZE_Z;
+            if (lx === 0) affectedChunks.add(this.world.getChunkKey(chunkX - 1, chunkZ));
+            if (lx === CHUNK_SIZE_X - 1) affectedChunks.add(this.world.getChunkKey(chunkX + 1, chunkZ));
+            if (lz === 0) affectedChunks.add(this.world.getChunkKey(chunkX, chunkZ - 1));
+            if (lz === CHUNK_SIZE_Z - 1) affectedChunks.add(this.world.getChunkKey(chunkX, chunkZ + 1));
           }
         }
       }
     }
 
     // Place central molten meteor core at crater bottom
-    this.world.setBlock(cx, Math.max(2, cy - 2), cz, BlockType.OBSIDIAN);
-    this.world.setBlock(cx, Math.max(3, cy - 1), cz, BlockType.GLOWSTONE);
+    this.world.setBlock(cx, Math.max(2, cy - 2), cz, BlockType.OBSIDIAN, false);
+    this.world.setBlock(cx, Math.max(3, cy - 1), cz, BlockType.GLOWSTONE, false);
+
+    // Rebuild affected chunks ONCE at the end!
+    this.world.rebuildChunks(affectedChunks);
 
     // 4. Damage player if close to crater explosion radius
-    if (stats) {
-      const distToPlayer = impactPos.distanceTo(stats ? stats as unknown as THREE.Vector3 : impactPos);
-      if (distToPlayer < 5.5) {
+    if (stats && playerPos) {
+      const distToPlayer = impactPos.distanceTo(playerPos);
+      if (distToPlayer < 6.0) {
         const dmg = Math.max(3, Math.floor((6.0 - distToPlayer) * 2.5));
         stats.takeDamage(dmg);
       }
@@ -980,13 +997,26 @@ export class WorldEventManager {
       m.mesh.rotation.x += dt * 5;
       m.mesh.rotation.y += dt * 7;
 
-      // Check ground collision / target reached
+      const currentBlock = this.world.getBlock(m.currentPos.x, m.currentPos.y, m.currentPos.z);
+
+      // Check ground collision / target reached / impact with solid block
       if (
         m.currentPos.y <= m.targetPos.y ||
+        (currentBlock !== BlockType.AIR && currentBlock !== BlockType.WATER) ||
         m.currentPos.distanceTo(m.startPos) >= m.startPos.distanceTo(m.targetPos)
       ) {
         this.scene.remove(m.mesh);
-        this.createExplosionEffectsAndCrater(m.targetPos, stats);
+        m.mesh.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) mesh.material.forEach((mat) => mat.dispose());
+              else mesh.material.dispose();
+            }
+          }
+        });
+        this.createExplosionEffectsAndCrater(m.currentPos, stats, playerPos);
         this.activeMeteors.splice(i, 1);
       }
     }
@@ -998,7 +1028,10 @@ export class WorldEventManager {
       if (p.life >= p.maxLife) {
         this.scene.remove(p.mesh);
         p.mesh.geometry.dispose();
-        (p.mesh.material as THREE.Material).dispose();
+        if (p.mesh.material) {
+          if (Array.isArray(p.mesh.material)) p.mesh.material.forEach((mat) => mat.dispose());
+          else p.mesh.material.dispose();
+        }
         this.explosionParticles.splice(i, 1);
         continue;
       }

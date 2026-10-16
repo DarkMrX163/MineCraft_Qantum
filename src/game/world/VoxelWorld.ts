@@ -160,11 +160,21 @@ export class VoxelWorld {
     this.loadedChunks.set(key, { x: cx, z: cz, mesh: chunkMesh });
   }
 
-  private rebuildChunk(cx: number, cz: number) {
+  public rebuildChunk(cx: number, cz: number) {
     const key = this.getChunkKey(cx, cz);
     const chunk = this.loadedChunks.get(key);
     if (chunk) {
       chunk.mesh.buildMesh(cx, cz, (gx, gy, gz) => this.getBlock(gx, gy, gz));
+    }
+  }
+
+  // Rebuild a batch of chunks specified by a set of chunk keys ("cx,cz")
+  public rebuildChunks(chunkKeys: Set<string>) {
+    for (const key of chunkKeys) {
+      const chunk = this.loadedChunks.get(key);
+      if (chunk) {
+        chunk.mesh.buildMesh(chunk.x, chunk.z, (gx, gy, gz) => this.getBlock(gx, gy, gz));
+      }
     }
   }
 
