@@ -291,34 +291,42 @@ export default function App() {
 
       net.onInit(({ players, blockChanges }) => {
         voxelWorld.applyServerBlockChanges(blockChanges);
-        setPlayerCount(players.length + 1);
 
         players.forEach((p) => {
-          const avatar = new Avatar(p.id, p.name, p.color);
-          avatar.targetPosition.set(p.x, p.y, p.z);
-          avatar.targetYaw = p.yaw;
-          avatarsRef.current.set(p.id, avatar);
-          scene.add(avatar.mesh);
+          if (!avatarsRef.current.has(p.id)) {
+            const avatar = new Avatar(p.id, p.name || 'Стив', p.color || '#00d26a');
+            avatar.targetPosition.set(p.x, p.y, p.z);
+            avatar.targetYaw = p.yaw;
+            avatarsRef.current.set(p.id, avatar);
+            scene.add(avatar.mesh);
+          }
         });
+        setPlayerCount(avatarsRef.current.size + 1);
       });
 
       net.onPlayerJoined((p) => {
-        const avatar = new Avatar(p.id, p.name, p.color);
-        avatar.targetPosition.set(p.x, p.y, p.z);
-        avatarsRef.current.set(p.id, avatar);
-        scene.add(avatar.mesh);
-        setPlayerCount((prev) => prev + 1);
+        if (!avatarsRef.current.has(p.id)) {
+          const avatar = new Avatar(p.id, p.name || 'Стив', p.color || '#00d26a');
+          avatar.targetPosition.set(p.x, p.y, p.z);
+          avatarsRef.current.set(p.id, avatar);
+          scene.add(avatar.mesh);
+          setPlayerCount(avatarsRef.current.size + 1);
+        }
       });
 
       net.onPlayerMoved((p) => {
-        const avatar = avatarsRef.current.get(p.id);
-        if (avatar) {
-          avatar.targetPosition.set(p.x, p.y, p.z);
-          avatar.targetYaw = p.yaw;
-          avatar.targetPitch = p.pitch;
-          avatar.isMoving = p.isMoving;
-          avatar.updateHeldBlock(p.holdingBlock as BlockType);
+        let avatar = avatarsRef.current.get(p.id);
+        if (!avatar) {
+          avatar = new Avatar(p.id, (p as { name?: string }).name || 'Стив', (p as { color?: string }).color || '#00d26a');
+          avatarsRef.current.set(p.id, avatar);
+          scene.add(avatar.mesh);
+          setPlayerCount(avatarsRef.current.size + 1);
         }
+        avatar.targetPosition.set(p.x, p.y, p.z);
+        avatar.targetYaw = p.yaw;
+        avatar.targetPitch = p.pitch;
+        avatar.isMoving = p.isMoving;
+        avatar.updateHeldBlock(p.holdingBlock as BlockType);
       });
 
       net.onPlayerLeft((id) => {
@@ -327,7 +335,7 @@ export default function App() {
           scene.remove(avatar.mesh);
           avatar.dispose();
           avatarsRef.current.delete(id);
-          setPlayerCount((prev) => Math.max(1, prev - 1));
+          setPlayerCount(avatarsRef.current.size + 1);
         }
       });
 
