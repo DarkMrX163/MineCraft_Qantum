@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Globe, Settings, User, Palette, KeyRound, Sparkles, Volume2, VolumeX, Shield, Info, Check, Copy } from 'lucide-react';
+import { Play, Globe, Settings, User, Palette, KeyRound, Sparkles, Volume2, VolumeX, Shield, Info, Check, Copy, Share2 } from 'lucide-react';
 import { SoundEffects } from '../game/audio/SoundEffects';
 
 interface TitleScreenProps {
@@ -30,7 +30,8 @@ const SPLASH_MESSAGES = [
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
   const urlParams = new URLSearchParams(window.location.search);
-  const initialRoom = urlParams.get('room') || localStorage.getItem('craftcraft_room_id') || 'default';
+  const inviteRoom = urlParams.get('room');
+  const initialRoom = inviteRoom || localStorage.getItem('craftcraft_room_id') || 'default';
   const savedName = localStorage.getItem('craftcraft_player_name') || ('Стив_' + Math.floor(Math.random() * 899 + 100));
   const savedColor = localStorage.getItem('craftcraft_player_color') || SHIRT_COLORS[0].hex;
 
@@ -41,13 +42,36 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [showMultiplayerPrompt, setShowMultiplayerPrompt] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [isMuted, setIsMuted] = useState(SoundEffects.getInstance().isMuted);
+
+  const [activeRooms, setActiveRooms] = useState<Array<{ roomId: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }>>([]);
+
+  const fetchActiveRooms = async () => {
+    try {
+      const res = await fetch('/api/rooms');
+      if (res.ok) {
+        const data = await res.json();
+        setActiveRooms(data);
+      }
+    } catch {
+      // Ignore network errors
+    }
+  };
 
   useEffect(() => {
     // Pick random splash message on mount
     const randomIdx = Math.floor(Math.random() * SPLASH_MESSAGES.length);
     setSplash(SPLASH_MESSAGES[randomIdx]);
+    fetchActiveRooms();
   }, []);
+
+  useEffect(() => {
+    if (!showMultiplayerPrompt) return;
+    fetchActiveRooms();
+    const interval = setInterval(fetchActiveRooms, 3500);
+    return () => clearInterval(interval);
+  }, [showMultiplayerPrompt]);
 
   // Sync settings to localStorage whenever changed
   useEffect(() => {
@@ -72,11 +96,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
     onStartGame(playerName.trim(), selectedColor, 'local_world', true);
   };
 
-  const handleStartMultiplayer = () => {
+  const handleStartMultiplayer = (targetRoom?: string) => {
     playClick();
     if (!playerName.trim()) return;
-    const room = roomId.trim().toLowerCase() || 'default';
-    onStartGame(playerName.trim(), selectedColor, room, false);
+    const finalRoom = (targetRoom || roomId).trim().toLowerCase() || 'default';
+    setRoomId(finalRoom);
+    onStartGame(playerName.trim(), selectedColor, finalRoom, false);
   };
 
   const handleToggleMute = () => {
@@ -90,6 +115,15 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
     navigator.clipboard.writeText(roomId);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleCopyShareLink = (targetRoom?: string) => {
+    playClick();
+    const r = targetRoom || roomId || 'default';
+    const link = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(r)}&join=true`;
+    navigator.clipboard.writeText(link);
+    setCopiedShareLink(true);
+    setTimeout(() => setCopiedShareLink(false), 2200);
   };
 
   return (
@@ -187,6 +221,23 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
         </div>
       </div>
 
+      {/* Invite Banner if URL contains ?room=... */}
+      {inviteRoom && (
+        <div className="relative z-10 w-full max-w-sm mb-3 bg-emerald-950/90 border-2 border-emerald-400 p-3 text-center text-xs text-emerald-200 shadow-xl animate-pulse">
+          <div className="font-bold text-emerald-300 uppercase flex items-center justify-center gap-1.5 mb-1">
+            <Globe className="w-4 h-4 text-emerald-400" />
+            <span>Вас пригласили в онлайн комнату #{inviteRoom}!</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleStartMultiplayer(inviteRoom)}
+            className="w-full mt-1.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black uppercase text-xs border border-emerald-300 shadow-md active:translate-y-0.5 transition-all"
+          >
+            🎮 Играть вместе в #{inviteRoom}
+          </button>
+        </div>
+      )}
+
       {/* Main Minecraft Java Menu Buttons Column */}
       <div className="relative z-10 w-full max-w-sm flex flex-col gap-3.5 my-auto">
         {/* Singleplayer Button */}
@@ -206,7 +257,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
           className="relative w-full py-3.5 px-4 bg-[#6e6e6e] hover:bg-[#858585] active:bg-[#525252] text-white hover:text-[#ffffa0] font-bold text-base tracking-widest uppercase border-t-2 border-l-2 border-[#aaaaaa] border-b-2 border-r-2 border-[#333333] shadow-[inset_0_2px_0_rgba(255,255,255,0.3),0_4px_10px_rgba(0,0,0,0.6)] flex items-center justify-center gap-2.5 transition-colors select-none active:translate-y-0.5 [text-shadow:2px_2px_0_#242424]"
         >
           <Globe className="w-5 h-5 text-emerald-400" />
-          <span>Сетевая игра</span>
+          <span>Сетевая игра {activeRooms.length > 0 && `(${activeRooms.reduce((acc, r) => acc + r.playerCount, 0)} онлайн)`}</span>
         </button>
 
         {/* Settings & Character Options */}
@@ -346,14 +397,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
         </div>
       )}
 
-      {/* Multiplayer Direct Join Modal */}
+      {/* Multiplayer Direct Join & Active Rooms Server Browser Modal */}
       {showMultiplayerPrompt && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-[#221a14] border-4 border-[#4a3b2c] border-t-[#78614a] border-l-[#78614a] shadow-[0_12px_32px_rgba(0,0,0,0.95)] p-5 text-white">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-[#221a14] border-4 border-[#4a3b2c] border-t-[#78614a] border-l-[#78614a] shadow-[0_12px_32px_rgba(0,0,0,0.95)] p-5 text-white">
             <div className="flex items-center justify-between border-b border-[#3d3023] pb-3 mb-4">
               <div className="flex items-center gap-2 font-bold text-base text-emerald-400 uppercase tracking-wider">
                 <Globe className="w-5 h-5 text-emerald-400" />
-                <span>Сетевая игра</span>
+                <span>Сетевая игра — Сервер комнат</span>
               </div>
               <button
                 type="button"
@@ -365,28 +416,103 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
             </div>
 
             <div className="space-y-4 text-xs">
-              <div className="text-[#c0b0a0]">
-                Введите код комнаты для подключения к друзьями на общему серверу (до 15 игроков):
+              {/* Active Online Rooms List */}
+              <div className="space-y-2">
+                <div className="text-amber-300 font-bold uppercase tracking-wider text-[11px] flex items-center justify-between">
+                  <span>🔥 Игроки онлайн прямо сейчас:</span>
+                  <button
+                    type="button"
+                    onClick={fetchActiveRooms}
+                    className="text-[#8a7563] hover:text-white underline text-[10px]"
+                  >
+                    Обновить
+                  </button>
+                </div>
+
+                {activeRooms.length > 0 ? (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {activeRooms.map((r) => (
+                      <div
+                        key={r.roomId}
+                        className={`p-2.5 border flex items-center justify-between transition-all ${
+                          roomId === r.roomId
+                            ? 'bg-emerald-950/80 border-emerald-400 shadow-md'
+                            : 'bg-[#17110c] border-[#3a2d21] hover:border-[#6b533e]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2 font-bold text-white text-sm">
+                            <span className="text-emerald-400 font-mono">#{r.roomId}</span>
+                            <span className="text-[10px] bg-emerald-900/80 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40 font-mono">
+                              {r.playerCount}/{r.maxPlayers} игроков
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-[#9c8978] truncate max-w-[240px] mt-0.5">
+                            В комнате: {r.players.map(p => p.name).join(', ')}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyShareLink(r.roomId)}
+                            className="p-1.5 bg-[#34261b] hover:bg-[#4a382a] text-stone-300 border border-[#523e2e] text-[10px]"
+                            title="Скопировать ссылку для друга"
+                          >
+                            <Share2 className="w-3.5 h-3.5 text-emerald-400" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMultiplayerPrompt(false);
+                              handleStartMultiplayer(r.roomId);
+                            }}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-black uppercase text-xs shadow-sm"
+                          >
+                            Войти
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-[#17110c] border border-[#3a2d21] text-center text-[#8a7563]">
+                    Сейчас нет активных игроков. Создайте свою комнату или подключитесь по коду ниже!
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[#8a7563] font-bold uppercase tracking-wider block">
-                  Код комнаты:
+              {/* Room Code Manual Input */}
+              <div className="space-y-1 pt-2 border-t border-[#3d3023]">
+                <label className="text-[#c0b0a0] font-bold uppercase tracking-wider block flex items-center justify-between">
+                  <span>Код вашей комнаты:</span>
+                  <span className="text-[#8a7563] text-[10px]">Чтобы игра в одном мире — укажите один код!</span>
                 </label>
-                <input
-                  type="text"
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  maxLength={24}
-                  className="w-full bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-emerald-300 font-bold text-sm outline-none transition-colors"
-                  placeholder="default"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={roomId}
+                    onChange={(e) => setRoomId(e.target.value)}
+                    maxLength={24}
+                    className="flex-1 bg-[#120d09] border-2 border-[#473729] focus:border-emerald-400 px-3 py-2 text-emerald-300 font-bold text-sm outline-none transition-colors"
+                    placeholder="default"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyShareLink()}
+                    className="px-3 py-2 bg-[#34261b] hover:bg-[#4a382a] text-emerald-300 border border-[#523e2e] font-bold text-xs flex items-center gap-1 shrink-0"
+                    title="Скопировать ссылку для друга"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>{copiedShareLink ? 'Ссылка скопирована!' : 'Ссылка для друга'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Preset Quick Rooms */}
               <div className="space-y-1.5">
                 <div className="text-[#8a7563] font-bold uppercase tracking-wider text-[10px]">
-                  Популярные комнаты:
+                  Быстрый выбор стандартных комнат:
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {['default', 'world1', 'survival', 'craft-room'].map((preset) => (
@@ -423,9 +549,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
                   setShowMultiplayerPrompt(false);
                   handleStartMultiplayer();
                 }}
-                className="py-2.5 bg-[#22632b] hover:bg-[#2e8039] text-white hover:text-[#ffffa0] font-bold uppercase border-t-2 border-l-2 border-[#42a84e] border-b-2 border-r-2 border-[#123817] transition-colors flex items-center justify-center gap-1"
+                className="py-2.5 bg-[#22632b] hover:bg-[#2e8039] text-white hover:text-[#ffffa0] font-bold uppercase border-t-2 border-l-2 border-[#42a84e] border-b-2 border-r-2 border-[#123817] transition-colors flex items-center justify-center gap-1 shadow-lg"
               >
-                <span>Подключиться</span>
+                <span>Подключиться к #{roomId}</span>
               </button>
             </div>
           </div>

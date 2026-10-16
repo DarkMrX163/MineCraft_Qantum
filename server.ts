@@ -125,6 +125,27 @@ async function startServer() {
 
   app.use(express.json());
 
+  app.get('/api/rooms', (req, res) => {
+    const result: Array<{ roomId: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }> = [];
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.players.size > 0) {
+        const playerList = Array.from(room.players.values()).map(p => ({
+          id: p.state.id,
+          name: p.state.name,
+          color: p.state.color
+        }));
+        result.push({
+          roomId,
+          playerCount: room.players.size,
+          maxPlayers: MAX_PLAYERS_PER_ROOM,
+          players: playerList
+        });
+      }
+    }
+    result.sort((a, b) => b.playerCount - a.playerCount);
+    res.json(result);
+  });
+
   app.get('/api/room/:roomId', (req, res) => {
     const roomId = req.params.roomId || 'default';
     const room = rooms.get(roomId);

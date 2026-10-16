@@ -35,8 +35,12 @@ export const GameUI: React.FC<GameUIProps> = ({
     setIsMuted(muted);
   };
 
+  const getInviteLink = () => {
+    return `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}&join=true`;
+  };
+
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
+    navigator.clipboard.writeText(getInviteLink());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -124,14 +128,14 @@ export const GameUI: React.FC<GameUIProps> = ({
             </div>
 
             <p className="text-sm text-stone-300 my-4 leading-relaxed">
-              Отправьте эту ссылку друзьям! До <strong className="text-emerald-400">10 игроков</strong> могут строить вместе в реальном времени. Все постройки автоматически сохраняются!
+              Отправьте эту ссылку друзьям! До <strong className="text-emerald-400">15 игроков</strong> могут строить вместе в реальном времени. Все постройки и изменения мира сохраняются!
             </p>
 
             <div className="flex items-center gap-2 bg-stone-950 p-3 rounded-2xl border border-stone-800 my-2">
               <input
                 type="text"
                 readOnly
-                value={window.location.href}
+                value={getInviteLink()}
                 className="bg-transparent text-xs text-stone-300 flex-1 focus:outline-none"
               />
               <button

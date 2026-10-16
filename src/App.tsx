@@ -201,7 +201,22 @@ export default function App() {
     setRoomId(room);
     setIsSinglePlayer(singlePlayer);
     setGameState('PLAYING');
+
+    if (!singlePlayer) {
+      const newUrl = `${window.location.pathname}?room=${encodeURIComponent(room)}`;
+      window.history.replaceState(null, '', newUrl);
+    }
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('join') === 'true' && params.get('room')) {
+      const targetRoom = params.get('room') || 'default';
+      const savedName = localStorage.getItem('craftcraft_player_name') || ('Стив_' + Math.floor(Math.random() * 899 + 100));
+      const savedColor = localStorage.getItem('craftcraft_player_color') || '#00d26a';
+      handleStartGame(savedName, savedColor, targetRoom, false);
+    }
+  }, []);
 
   useEffect(() => {
     if (gameState !== 'PLAYING' || !canvasMountRef.current) return;
