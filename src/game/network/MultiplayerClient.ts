@@ -171,6 +171,21 @@ export class MultiplayerClient {
         playerColor: this.playerColor,
         state: this.lastLocalState
       });
+
+      // Announce room presence to global cloud server registry (ntfy.sh) so GitHub Pages users see active servers!
+      try {
+        fetch('https://ntfy.sh/craftcraft_servers_3d_v6', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: this.roomId,
+            serverName: `Мир ${this.playerName}`,
+            hostName: this.playerName,
+            playerCount: this.knownPlayersMap.size + 1,
+            maxPlayers: 15,
+            timestamp: Date.now()
+          })
+        }).catch(() => {});
+      } catch {}
     }, 2500);
 
     // Cleanup stale players (inactive > 8s)

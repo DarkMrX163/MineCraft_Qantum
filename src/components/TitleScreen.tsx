@@ -53,15 +53,53 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
   const [activeRooms, setActiveRooms] = useState<Array<{ roomId: string; serverName?: string; hostName?: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }>>([]);
 
   const fetchActiveRooms = async () => {
+    const serversMap = new Map<string, { roomId: string; serverName?: string; hostName?: string; playerCount: number; maxPlayers: number; players: Array<{ id: string; name: string; color: string }> }>();
+
+    // 1. Try local Express server endpoint
     try {
       const res = await fetch('/api/rooms');
       if (res.ok) {
         const data = await res.json();
-        setActiveRooms(data);
+        if (Array.isArray(data)) {
+          data.forEach(s => serversMap.set(s.roomId, s));
+        }
       }
     } catch {
-      // Ignore network errors
+      // Ignore
     }
+
+    // 2. Fetch from Public Cloud Registry (ntfy.sh - works on GitHub Pages, GitLab Pages, Netlify everywhere!)
+    try {
+      const res = await fetch('https://ntfy.sh/craftcraft_servers_3d_v6/json?poll=1');
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        const now = Date.now();
+
+        lines.forEach(line => {
+          try {
+            const entry = JSON.parse(line);
+            if (entry.message) {
+              const world = JSON.parse(entry.message);
+              if (world && world.roomId && (now - (world.timestamp || 0) < 12000)) {
+                serversMap.set(world.roomId, {
+                  roomId: world.roomId,
+                  serverName: world.serverName || `Мир #${world.roomId}`,
+                  hostName: world.hostName || 'Игрок',
+                  playerCount: world.playerCount || 1,
+                  maxPlayers: world.maxPlayers || 10,
+                  players: world.players || [{ id: 'p1', name: world.hostName || 'Игрок', color: '#00d26a' }]
+                });
+              }
+            }
+          } catch {}
+        });
+      }
+    } catch {
+      // Ignore
+    }
+
+    setActiveRooms(Array.from(serversMap.values()));
   };
 
   const handleCreateAndStartWorld = async () => {
@@ -71,20 +109,29 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onStartGame }) => {
     const pin = (newServerPin || '1234').trim().toLowerCase().replace(/[^a-z0-9_]/g, '') || '1234';
     const serverName = (newServerName || `Мир ${playerName}`).trim();
 
+    const worldPayload = {
+      roomId: pin,
+      serverName,
+      hostName: playerName,
+      maxPlayers: newServerMaxPlayers,
+      playerCount: 1,
+      timestamp: Date.now()
+    };
+
     try {
       await fetch('/api/worlds/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: pin,
-          name: serverName,
-          hostName: playerName,
-          maxPlayers: newServerMaxPlayers
-        })
+        body: JSON.stringify(worldPayload)
       });
-    } catch {
-      // Ignore
-    }
+    } catch {}
+
+    try {
+      await fetch('https://ntfy.sh/craftcraft_servers_3d_v6', {
+        method: 'POST',
+        body: JSON.stringify(worldPayload)
+      });
+    } catch {}
 
     setRoomId(pin);
     setShowMultiplayerPrompt(false);
